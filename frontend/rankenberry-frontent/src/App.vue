@@ -5,25 +5,15 @@ import { RouterLink, RouterView } from 'vue-router'
 <template>
   <div id="app">
     <nav class="navbar is-light" role="navigation" aria-label="main navigation">
-      <div class="container">
-        <div class="navbar-brand">
-          <a class="navbar-item" href="/">
-            <strong>Rankenberry</strong>
-          </a>
-        </div>
-        <div class="navbar-menu is-active">
-          <div class="navbar-end">
-            <RouterLink to="/" class="navbar-item">Home</RouterLink>
-            <RouterLink to="/add" class="navbar-item">Add Keyword/Domain</RouterLink>
-          </div>
+      <div class="navbar-menu">
+        <div class="navbar-start">
+          <router-link to="/" class="navbar-item">Home</router-link>
+          <router-link to="/add" class="navbar-item">Add Project/Keywords</router-link>
+          <router-link to="/keyword-management" class="navbar-item">Keyword Management</router-link>
         </div>
       </div>
     </nav>
-    <section class="section">
-      <div class="container">
-        <RouterView />
-      </div>
-    </section>
+    <router-view></router-view>
   </div>
 </template>
 

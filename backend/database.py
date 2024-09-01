@@ -98,3 +98,27 @@ def get_serp_data(keyword_id):
     serp_data = c.fetchall()
     conn.close()
     return serp_data
+
+def get_all_keywords():
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM keywords")
+    keywords = c.fetchall()
+    conn.close()
+    return [{"id": k[0], "project_id": k[1], "keyword": k[2]} for k in keywords]
+
+def delete_keyword_by_id(keyword_id):
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM keywords WHERE id = ?", (keyword_id,))
+    c.execute("DELETE FROM serp_data WHERE keyword_id = ?", (keyword_id,))
+    conn.commit()
+    conn.close()
+
+def delete_keywords_by_project(project_id):
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM serp_data WHERE keyword_id IN (SELECT id FROM keywords WHERE project_id = ?)", (project_id,))
+    c.execute("DELETE FROM keywords WHERE project_id = ?", (project_id,))
+    conn.commit()
+    conn.close()

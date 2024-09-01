@@ -6,7 +6,7 @@ import uvicorn
 import os
 from dotenv import load_dotenv
 import aiohttp
-from database import add_serp_data, get_keywords
+from database import add_serp_data, get_keywords, get_all_keywords, delete_keyword_by_id, delete_keywords_by_project
 import json
 from datetime import datetime
 
@@ -206,6 +206,20 @@ async def add_keywords(data: dict):
     conn.close()
     
     return added_keywords
+
+@app.get("/api/keywords")
+async def get_all_keywords_route():
+    return get_all_keywords()
+
+@app.delete("/api/keywords/{keyword_id}")
+async def delete_keyword(keyword_id: int):
+    delete_keyword_by_id(keyword_id)
+    return {"message": "Keyword deleted successfully"}
+
+@app.delete("/projects/{project_id}/keywords")
+async def delete_all_keywords(project_id: int):
+    delete_keywords_by_project(project_id)
+    return {"message": "All keywords for the project deleted successfully"}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

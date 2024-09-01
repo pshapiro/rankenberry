@@ -14,6 +14,11 @@ const router = createRouter({
       path: '/add',
       name: 'add',
       component: AddKeywordDomain
+    },
+    {
+      path: '/keyword-management',
+      name: 'KeywordManagement',
+      component: () => import('../components/KeywordManagement.vue')
     }
   ]
 })

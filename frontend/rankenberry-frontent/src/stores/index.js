@@ -114,6 +114,33 @@ export const useMainStore = defineStore('main', {
         await this.fetchSingleSerpData(keyword.id)
       }
       await this.fetchRankData()
+    },
+    async fetchKeywords() {
+      try {
+        const response = await axios.get(`${API_URL}/keywords`)
+        this.keywords = response.data
+      } catch (error) {
+        console.error('Error fetching keywords:', error)
+        throw error
+      }
+    },
+    async deleteKeyword(keywordId) {
+      try {
+        await axios.delete(`${API_URL}/keywords/${keywordId}`)
+        this.keywords = this.keywords.filter(kw => kw.id !== keywordId)
+      } catch (error) {
+        console.error('Error deleting keyword:', error)
+        throw error
+      }
+    },
+    async deleteAllKeywords(projectId) {
+      try {
+        await axios.delete(`${API_URL}/projects/${projectId}/keywords`)
+        this.keywords = this.keywords.filter(kw => kw.project_id !== projectId)
+      } catch (error) {
+        console.error('Error deleting all keywords:', error)
+        throw error
+      }
     }
   }
 })
