@@ -23,6 +23,7 @@
           <th>Keyword</th>
           <th>Domain</th>
           <th>Rank</th>
+          <th>Change</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -31,7 +32,28 @@
           <td>{{ formatDate(item.date) }}</td>
           <td>{{ item.keyword }}</td>
           <td>{{ item.domain }}</td>
-          <td>{{ item.rank }}</td>
+          <td>{{ item.rank === null || item.rank === -1 ? '-' : item.rank }}</td>
+          <td>
+            <span v-if="rankChanges[item.keyword_id] && rankChanges[item.keyword_id].length > 1">
+              <span v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1" class="has-text-danger">
+                ▼ {{ rankChanges[item.keyword_id][1].rank }}
+              </span>
+              <span v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)" class="has-text-success">
+                ▲ {{ item.rank }}
+              </span>
+              <span v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1">
+                <span v-if="item.rank < rankChanges[item.keyword_id][1].rank" class="has-text-success">
+                  ▲ {{ rankChanges[item.keyword_id][1].rank - item.rank }}
+                </span>
+                <span v-else-if="item.rank > rankChanges[item.keyword_id][1].rank" class="has-text-danger">
+                  ▼ {{ item.rank - rankChanges[item.keyword_id][1].rank }}
+                </span>
+                <span v-else>-</span>
+              </span>
+              <span v-else>-</span>
+            </span>
+            <span v-else>-</span>
+          </td>
           <td>
             <div class="buttons">
               <button @click="viewDetails(item)" class="button is-small is-info">
@@ -81,12 +103,28 @@ const filteredRankData = computed(() => {
   return rankData.value
 })
 
+const rankChanges = computed(() => {
+  const changes = {}
+  const sortedData = [...filteredRankData.value].sort((a, b) => new Date(b.date) - new Date(a.date))
+  sortedData.forEach(item => {
+    if (!changes[item.keyword_id]) {
+      changes[item.keyword_id] = [item]
+    } else if (changes[item.keyword_id].length < 2) {
+      changes[item.keyword_id].push(item)
+    }
+  })
+  return changes
+})
+
 const fetchSerpData = async () => {
   if (selectedProject.value) {
+    isLoading.value = true
     try {
       await store.fetchSerpData(selectedProject.value)
     } catch (error) {
       console.error('Error fetching SERP data:', error)
+    } finally {
+      isLoading.value = false
     }
   }
 }

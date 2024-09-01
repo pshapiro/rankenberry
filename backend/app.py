@@ -59,7 +59,7 @@ def init_db():
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      keyword_id INTEGER,
                      date TEXT NOT NULL,
-                     rank INTEGER NOT NULL,
+                     rank INTEGER,
                      full_data TEXT NOT NULL)''')
     conn.commit()
     conn.close()
@@ -179,12 +179,33 @@ def add_serp_data(keyword_id, serp_data):
     conn = get_db_connection()
     c = conn.cursor()
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
-    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), None)
+    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
     full_data = json.dumps(serp_data)
     conn.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data) VALUES (?, ?, ?, ?)',
                  (keyword_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), rank, full_data))
     conn.commit()
     conn.close()
+
+@app.post("/api/keywords")
+async def add_keywords(data: dict):
+    project_id = data.get('project_id')
+    keywords = data.get('keywords')
+    if not project_id or not keywords:
+        raise HTTPException(status_code=400, detail="Missing project_id or keywords")
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    added_keywords = []
+    
+    for keyword in keywords:
+        c.execute('INSERT INTO keywords (project_id, keyword) VALUES (?, ?)', (project_id, keyword))
+        keyword_id = c.lastrowid
+        added_keywords.append({"id": keyword_id, "project_id": project_id, "keyword": keyword})
+    
+    conn.commit()
+    conn.close()
+    
+    return added_keywords
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

@@ -98,6 +98,22 @@ export const useMainStore = defineStore('main', {
         console.error('Error fetching single SERP data:', error);
         throw error;
       }
+    },
+    async addKeywords(projectId, keywords) {
+      try {
+        const response = await axios.post(`${API_URL}/keywords`, { project_id: projectId, keywords })
+        this.keywords = [...this.keywords, ...response.data]
+        return response.data
+      } catch (error) {
+        console.error('Error adding keywords:', error)
+        throw error
+      }
+    },
+    async fetchSerpDataForKeywords(keywords) {
+      for (const keyword of keywords) {
+        await this.fetchSingleSerpData(keyword.id)
+      }
+      await this.fetchRankData()
     }
   }
 })

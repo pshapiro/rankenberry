@@ -59,6 +59,7 @@
         </div>
       </div>
     </form>
+    <div v-if="isLoading" class="loading-overlay">Loading...</div>
   </div>
 </template>
 
@@ -75,6 +76,7 @@ const domain = ref('')
 const selectedProject = ref('')
 const keywords = ref('')
 const message = ref('')
+const isLoading = ref(false)
 
 onMounted(async () => {
   try {
@@ -104,14 +106,36 @@ const addKeywords = async () => {
   }
   const keywordList = keywords.value.split('\n').map(kw => kw.trim()).filter(kw => kw)
   try {
-    for (const keyword of keywordList) {
-      await store.addKeyword(selectedProject.value, keyword)
-    }
+    isLoading.value = true
+    const addedKeywords = await store.addKeywords(selectedProject.value, keywordList)
     message.value = 'Keywords added successfully!'
     keywords.value = ''
+    
+    // Fetch SERP data for newly added keywords
+    await store.fetchSerpDataForKeywords(addedKeywords)
+    message.value += ' SERP data fetched for new keywords.'
   } catch (error) {
     message.value = `Error adding keywords: ${error.message}`
     console.error('Error adding keywords:', error)
+  } finally {
+    isLoading.value = false
   }
 }
 </script>
+
+<style scoped>
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 24px;
+  z-index: 9999;
+}
+</style>
