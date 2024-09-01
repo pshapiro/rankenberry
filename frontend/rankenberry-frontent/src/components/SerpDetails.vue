@@ -1,40 +1,68 @@
 <template>
-  <div v-if="serpData" class="serp-details">
-    <h3>SERP Details for "{{ keyword }}"</h3>
-    <p>Date: {{ formatDate(serpData.date) }}</p>
-    <h4>Organic Results:</h4>
-    <table>
-      <thead>
-        <tr>
-          <th>Position</th>
-          <th>Page</th>
-          <th>Domain</th>
-          <th>Link</th>
-          <th>Title</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="result in serpData.full_data" :key="result.position">
-          <td>{{ result.position }}</td>
-          <td>{{ Math.ceil(result.position / 10) }}</td>
-          <td>{{ extractDomain(result.link) }}</td>
-          <td><a :href="result.link" target="_blank">{{ result.link }}</a></td>
-          <td>{{ result.title }}</td>
-          <td>{{ result.snippet }}</td>
-        </tr>
-      </tbody>
-    </table>
+  <div v-if="serpData" class="serp-details box">
+    <h3 class="title is-3">SERP Details for "{{ keyword }}"</h3>
+    <p class="subtitle">Date: {{ formatDate(serpData.date) }}</p>
+    <h4 class="title is-4">Organic Results:</h4>
+    <div v-if="organicResults.length > 0" class="table-container">
+      <table class="table is-fullwidth is-striped is-hoverable">
+        <thead>
+          <tr>
+            <th>Position</th>
+            <th>Domain</th>
+            <th>Title</th>
+            <th>Link</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="result in organicResults" :key="result.position">
+            <td>{{ result.position }}</td>
+            <td>{{ extractDomain(result.link) }}</td>
+            <td>{{ result.title }}</td>
+            <td><a :href="result.link" target="_blank" rel="noopener noreferrer">{{ result.link }}</a></td>
+            <td>{{ result.description }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div v-else>
+      <p>No organic results found. The full_data field is empty.</p>
+      <p>Rank: {{ serpData.rank }}</p>
+      <pre>{{ JSON.stringify(serpData, null, 2) }}</pre>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { defineProps } from 'vue'
+import { defineProps, watch, computed } from 'vue'
 
 const props = defineProps({
   serpData: Object,
   keyword: String
 })
+
+const organicResults = computed(() => {
+  console.log('Computing organicResults');
+  console.log('serpData:', props.serpData);
+  if (props.serpData && props.serpData.full_data) {
+    console.log('full_data:', props.serpData.full_data);
+    if (props.serpData.full_data.organic_results) {
+      console.log('organic_results:', props.serpData.full_data.organic_results);
+      return props.serpData.full_data.organic_results;
+    }
+  }
+  return [];
+});
+
+watch(() => props.serpData, (newValue) => {
+  console.log('SerpDetails received new serpData:', newValue)
+  if (newValue && newValue.full_data) {
+    console.log('Full data:', newValue.full_data)
+    console.log('Organic results:', organicResults.value)
+  } else {
+    console.log('No full_data found in serpData')
+  }
+}, { immediate: true })
 
 const formatDate = (dateString) => {
   const date = new Date(dateString)

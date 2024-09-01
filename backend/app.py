@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import aiohttp
 from database import add_serp_data, get_keywords
 import json
+from datetime import datetime
 
 load_dotenv()
 
@@ -173,6 +174,17 @@ async def fetch_serp_data(keyword):
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as response:
             return await response.json()
+
+def add_serp_data(keyword_id, serp_data):
+    conn = get_db_connection()
+    c = conn.cursor()
+    project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
+    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), None)
+    full_data = json.dumps(serp_data)
+    conn.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data) VALUES (?, ?, ?, ?)',
+                 (keyword_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), rank, full_data))
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

@@ -1,14 +1,22 @@
 <template>
   <div class="rank-table">
-    <h2>Rank Table</h2>
-    <select v-model="selectedProject">
-      <option value="">All Projects</option>
-      <option v-for="project in projects" :key="project.id" :value="project.id">
-        {{ project.name }}
-      </option>
-    </select>
-    <button @click="fetchSerpData" :disabled="!selectedProject">Fetch Latest SERP Data</button>
-    <table>
+    <h2 class="title is-2">Rank Table</h2>
+    <div class="field is-grouped">
+      <div class="control is-expanded">
+        <div class="select is-fullwidth">
+          <select v-model="selectedProject">
+            <option value="">All Projects</option>
+            <option v-for="project in projects" :key="project.id" :value="project.id">
+              {{ project.name }}
+            </option>
+          </select>
+        </div>
+      </div>
+      <div class="control">
+        <button @click="fetchSerpData" :disabled="!selectedProject" class="button is-primary">Fetch Latest SERP Data</button>
+      </div>
+    </div>
+    <table class="table is-fullwidth is-striped is-hoverable">
       <thead>
         <tr>
           <th>Date</th>
@@ -25,10 +33,12 @@
           <td>{{ item.domain }}</td>
           <td>{{ item.rank }}</td>
           <td>
-            <button @click="viewDetails(item)">
-              {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
-            </button>
-            <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id">Fetch New Data</button>
+            <div class="buttons">
+              <button @click="viewDetails(item)" class="button is-small is-info">
+                {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
+              </button>
+              <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
+            </div>
           </td>
         </tr>
       </tbody>
@@ -78,7 +88,9 @@ const viewDetails = async (item) => {
       selectedKeyword.value = ''
     } else {
       try {
-        selectedSerpData.value = await store.fetchFullSerpData(item.id)
+        const fullSerpData = await store.fetchFullSerpData(item.id)
+        console.log('Full SERP data fetched:', fullSerpData) // Add this line
+        selectedSerpData.value = fullSerpData
         console.log('Fetched SERP data:', selectedSerpData.value)
         selectedKeyword.value = item.keyword
       } catch (error) {

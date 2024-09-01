@@ -74,7 +74,17 @@ export const useMainStore = defineStore('main', {
     async fetchFullSerpData(serpDataId) {
       try {
         const response = await axios.get(`${API_URL}/serp-data/${serpDataId}`)
-        return response.data
+        const data = response.data
+        if (typeof data.full_data === 'string') {
+          try {
+            data.full_data = JSON.parse(data.full_data)
+          } catch (parseError) {
+            console.error('Error parsing full_data:', parseError)
+            data.full_data = {}
+          }
+        }
+        console.log('Full SERP data response:', JSON.stringify(data, null, 2))
+        return data
       } catch (error) {
         console.error('Error fetching full SERP data:', error)
         throw error
