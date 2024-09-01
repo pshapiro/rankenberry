@@ -50,6 +50,9 @@
       </div>
       <SerpDetails :serpData="selectedSerpData" :keyword="selectedKeyword" />
     </div>
+    <div v-if="isLoading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+    </div>
   </div>
 </template>
 
@@ -64,6 +67,7 @@ const { rankData, projects } = storeToRefs(store)
 const selectedProject = ref('')
 const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
+const isLoading = ref(false)
 
 onMounted(() => {
   store.fetchProjects()
@@ -110,11 +114,14 @@ const viewDetails = async (item) => {
 
 const fetchSingleSerpData = async (item) => {
   if (item && item.keyword_id) {
+    isLoading.value = true
     try {
       await store.fetchSingleSerpData(item.keyword_id)
       await store.fetchRankData()
     } catch (error) {
       console.error('Error fetching single SERP data:', error)
+    } finally {
+      isLoading.value = false
     }
   } else {
     console.error('Invalid item or missing keyword_id:', item)
@@ -148,5 +155,32 @@ const closeSerpDetails = () => {
   position: absolute;
   top: 0.75rem;
   right: 0.75rem;
+}
+
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.loading-spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #3498db;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 </style>
