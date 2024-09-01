@@ -43,7 +43,13 @@
         </tr>
       </tbody>
     </table>
-    <SerpDetails v-if="selectedSerpData" :serpData="selectedSerpData" :keyword="selectedKeyword" />
+    <div v-if="selectedSerpData" class="box mt-4 serp-details-container">
+      <div class="serp-details-header">
+        <h3 class="title is-4">SERP Details for "{{ selectedKeyword }}"</h3>
+        <button @click="closeSerpDetails" class="delete"></button>
+      </div>
+      <SerpDetails :serpData="selectedSerpData" :keyword="selectedKeyword" />
+    </div>
   </div>
 </template>
 
@@ -119,4 +125,28 @@ const formatDate = (dateString) => {
   const date = new Date(dateString)
   return date.toLocaleString()
 }
+
+const closeSerpDetails = () => {
+  selectedSerpData.value = null
+  selectedKeyword.value = ''
+}
 </script>
+
+<style scoped>
+.serp-details-container {
+  position: relative;
+}
+
+.serp-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.serp-details-header .delete {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+}
+</style>
