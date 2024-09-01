@@ -7,18 +7,21 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'home',
-      component: RankTable
+      name: 'Rank Table',
+      component: RankTable,
+      meta: { title: 'Rank Table' }
     },
     {
       path: '/add',
-      name: 'add',
-      component: AddKeywordDomain
+      name: 'Add Project/Keywords',
+      component: AddKeywordDomain,
+      meta: { title: 'Add Project/Keywords' }
     },
     {
       path: '/keyword-management',
-      name: 'KeywordManagement',
-      component: () => import('../components/KeywordManagement.vue')
+      name: 'Keyword Management',
+      component: () => import('../components/KeywordManagement.vue'),
+      meta: { title: 'Keyword Management' }
     }
   ]
 })
