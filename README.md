@@ -1,4 +1,4 @@
-# SEO Rank Tracker
+# Rankenberry: SEO Rank Tracker
 
 A simple rank tracking application leveraging a 3rd party API with advanced data features.
 
