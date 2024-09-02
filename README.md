@@ -1,4 +1,4 @@
-# Rankenberry: SEO Rank Tracker
+# ![rankenberry-logo](https://github.com/user-attachments/assets/7222a62b-52e2-4474-afa7-653362a0dfa1) Rankenberry: SEO Rank Tracker
 
 A simple rank tracking application leveraging a 3rd party API with advanced data features.
 
