@@ -46,23 +46,25 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS projects
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     name TEXT NOT NULL,
-                     domain TEXT NOT NULL)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS keywords
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     project_id INTEGER,
-                     keyword TEXT NOT NULL,
-                     active INTEGER DEFAULT 1,
-                     FOREIGN KEY (project_id) REFERENCES projects (id))''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS serp_data
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     keyword_id INTEGER,
-                     date TEXT NOT NULL,
-                     rank INTEGER,
-                     full_data TEXT NOT NULL,
-                     FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS projects
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  domain TEXT NOT NULL,
+                  active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS keywords
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  project_id INTEGER,
+                  keyword TEXT NOT NULL,
+                  active INTEGER DEFAULT 1,
+                  FOREIGN KEY (project_id) REFERENCES projects (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS serp_data
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  keyword_id INTEGER,
+                  date TEXT NOT NULL,
+                  rank INTEGER,
+                  full_data TEXT NOT NULL,
+                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
     conn.commit()
     conn.close()
 
@@ -250,6 +252,28 @@ async def delete_serp_data(serp_data_id: int):
     conn.commit()
     conn.close()
     return {"message": f"SERP data ID {serp_data_id} deleted successfully"}
+
+@app.put("/api/projects/{project_id}/toggle-status")
+async def toggle_project_status(project_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE projects SET active = NOT active WHERE id = ?', (project_id,))
+    c.execute('SELECT * FROM projects WHERE id = ?', (project_id,))
+    updated_project = c.fetchone()
+    conn.commit()
+    conn.close()
+    return {"id": updated_project[0], "name": updated_project[1], "domain": updated_project[2], "active": bool(updated_project[3])}
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('DELETE FROM serp_data WHERE keyword_id IN (SELECT id FROM keywords WHERE project_id = ?)', (project_id,))
+    c.execute('DELETE FROM keywords WHERE project_id = ?', (project_id,))
+    c.execute('DELETE FROM projects WHERE id = ?', (project_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"Project ID {project_id} deleted successfully"}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

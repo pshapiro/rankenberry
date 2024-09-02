@@ -10,7 +10,8 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS projects
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   name TEXT NOT NULL,
-                  domain TEXT NOT NULL)''')
+                  domain TEXT NOT NULL,
+                  active INTEGER DEFAULT 1)''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS keywords
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,10 +82,10 @@ def add_serp_data(keyword_id, serp_data):
 def get_projects():
     conn = sqlite3.connect('seo_rank_tracker.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM projects")
+    c.execute("SELECT id, name, domain, COALESCE(active, 1) as active FROM projects")
     projects = c.fetchall()
     conn.close()
-    return projects
+    return [{"id": p[0], "name": p[1], "domain": p[2], "active": bool(p[3])} for p in projects]
 
 async def get_keywords(project_id):
     conn = sqlite3.connect('seo_rank_tracker.db')

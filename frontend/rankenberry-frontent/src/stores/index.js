@@ -174,6 +174,29 @@ export const useMainStore = defineStore('main', {
         console.error('Error deleting rank data:', error)
         throw error
       }
+    },
+    async toggleProjectStatus(projectId) {
+      try {
+        const response = await axios.put(`${API_URL}/projects/${projectId}/toggle-status`)
+        const updatedProject = response.data
+        const index = this.projects.findIndex(p => p.id === projectId)
+        if (index !== -1) {
+          this.projects[index] = updatedProject
+        }
+      } catch (error) {
+        console.error('Error toggling project status:', error)
+        throw error
+      }
+    },
+    async deleteProject(projectId) {
+      try {
+        await axios.delete(`${API_URL}/projects/${projectId}`)
+        this.projects = this.projects.filter(p => p.id !== projectId)
+        this.keywords = this.keywords.filter(k => k.project_id !== projectId)
+      } catch (error) {
+        console.error('Error deleting project:', error)
+        throw error
+      }
     }
   }
 })

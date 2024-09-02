@@ -5,7 +5,19 @@
     <div v-else-if="error">{{ error }}</div>
     <div v-else>
       <div v-for="project in projects" :key="project.id" class="box">
-        <h3 class="title is-3">{{ project.name }}</h3>
+        <div class="level">
+          <div class="level-left">
+            <h3 class="title is-3">{{ project.name }}</h3>
+          </div>
+          <div class="level-right">
+            <div class="buttons">
+              <button @click="toggleProjectStatus(project.id)" class="button is-warning is-small">
+                {{ project.active ? 'Disable' : 'Enable' }}
+              </button>
+              <button @click="deleteProject(project.id)" class="button is-danger is-small">Delete</button>
+            </div>
+          </div>
+        </div>
         <table class="table is-fullwidth">
           <thead>
             <tr>
@@ -93,6 +105,24 @@ const activateKeyword = async (keywordId) => {
     await store.activateKeyword(keywordId)
   } catch (error) {
     console.error('Error activating keyword:', error)
+  }
+}
+
+const toggleProjectStatus = async (projectId) => {
+  try {
+    await store.toggleProjectStatus(projectId)
+  } catch (error) {
+    console.error('Error toggling project status:', error)
+  }
+}
+
+const deleteProject = async (projectId) => {
+  if (confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+    try {
+      await store.deleteProject(projectId)
+    } catch (error) {
+      console.error('Error deleting project:', error)
+    }
   }
 }
 </script>
