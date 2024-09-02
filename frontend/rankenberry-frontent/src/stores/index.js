@@ -133,6 +133,30 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
+    async deactivateKeyword(keywordId) {
+      try {
+        await axios.put(`${API_URL}/keywords/${keywordId}/deactivate`)
+        const index = this.keywords.findIndex(kw => kw.id === keywordId)
+        if (index !== -1) {
+          this.keywords[index].active = false
+        }
+      } catch (error) {
+        console.error('Error deactivating keyword:', error)
+        throw error
+      }
+    },
+    async activateKeyword(keywordId) {
+      try {
+        await axios.put(`${API_URL}/keywords/${keywordId}/activate`)
+        const index = this.keywords.findIndex(kw => kw.id === keywordId)
+        if (index !== -1) {
+          this.keywords[index].active = true
+        }
+      } catch (error) {
+        console.error('Error activating keyword:', error)
+        throw error
+      }
+    },
     async deleteAllKeywords(projectId) {
       try {
         await axios.delete(`${API_URL}/projects/${projectId}/keywords`)

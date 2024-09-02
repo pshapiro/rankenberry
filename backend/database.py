@@ -16,7 +16,10 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   project_id INTEGER,
                   keyword TEXT NOT NULL,
+                  active INTEGER DEFAULT 1,
                   FOREIGN KEY (project_id) REFERENCES projects (id))''')
+
+    c.execute('ALTER TABLE keywords ADD COLUMN active INTEGER DEFAULT 1')
 
     c.execute('''CREATE TABLE IF NOT EXISTS serp_data
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +55,7 @@ def add_project(name, domain):
 def add_keyword(project_id, keyword):
     conn = sqlite3.connect('seo_rank_tracker.db')
     c = conn.cursor()
-    c.execute("INSERT INTO keywords (project_id, keyword) VALUES (?, ?)", (project_id, keyword))
+    c.execute("INSERT INTO keywords (project_id, keyword, active) VALUES (?, ?, 1)", (project_id, keyword))
     keyword_id = c.lastrowid
     conn.commit()
     conn.close()
@@ -102,10 +105,10 @@ def get_serp_data(keyword_id):
 def get_all_keywords():
     conn = sqlite3.connect('seo_rank_tracker.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM keywords")
+    c.execute("SELECT id, project_id, keyword, COALESCE(active, 1) as active FROM keywords")
     keywords = c.fetchall()
     conn.close()
-    return [{"id": k[0], "project_id": k[1], "keyword": k[2]} for k in keywords]
+    return [{"id": k[0], "project_id": k[1], "keyword": k[2], "active": bool(k[3])} for k in keywords]
 
 def delete_keyword_by_id(keyword_id):
     conn = sqlite3.connect('seo_rank_tracker.db')

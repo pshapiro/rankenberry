@@ -54,6 +54,7 @@ def init_db():
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      project_id INTEGER,
                      keyword TEXT NOT NULL,
+                     active INTEGER DEFAULT 1,
                      FOREIGN KEY (project_id) REFERENCES projects (id))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS serp_data
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,9 +111,10 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
 async def fetch_and_store_serp_data(project_id: int):
     keywords = await get_keywords(project_id)
     for keyword in keywords:
-        serp_data = await fetch_serp_data(keyword['keyword'])
-        add_serp_data(keyword['id'], serp_data)
-    return {"message": "SERP data fetched and stored successfully"}
+        if keyword['active']:
+            serp_data = await fetch_serp_data(keyword['keyword'])
+            add_serp_data(keyword['id'], serp_data)
+    return {"message": "SERP data fetched and stored successfully for active keywords"}
 
 @app.get("/api/rankData")
 async def get_rank_data():
@@ -198,9 +200,9 @@ async def add_keywords(data: dict):
     added_keywords = []
     
     for keyword in keywords:
-        c.execute('INSERT INTO keywords (project_id, keyword) VALUES (?, ?)', (project_id, keyword))
+        c.execute('INSERT INTO keywords (project_id, keyword, active) VALUES (?, ?, 1)', (project_id, keyword))
         keyword_id = c.lastrowid
-        added_keywords.append({"id": keyword_id, "project_id": project_id, "keyword": keyword})
+        added_keywords.append({"id": keyword_id, "project_id": project_id, "keyword": keyword, "active": True})
     
     conn.commit()
     conn.close()
@@ -220,6 +222,24 @@ async def delete_keyword(keyword_id: int):
 async def delete_all_keywords(project_id: int):
     delete_keywords_by_project(project_id)
     return {"message": "All keywords for the project deleted successfully"}
+
+@app.put("/api/keywords/{keyword_id}/deactivate")
+async def deactivate_keyword(keyword_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE keywords SET active = 0 WHERE id = ?', (keyword_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"Keyword ID {keyword_id} deactivated successfully"}
+
+@app.put("/api/keywords/{keyword_id}/activate")
+async def activate_keyword(keyword_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE keywords SET active = 1 WHERE id = ?', (keyword_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"Keyword ID {keyword_id} activated successfully"}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

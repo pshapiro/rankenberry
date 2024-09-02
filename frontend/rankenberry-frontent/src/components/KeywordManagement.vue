@@ -14,10 +14,14 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="keyword in projectKeywords[project.id]" :key="keyword.id">
+            <tr v-for="keyword in projectKeywords[project.id]" :key="keyword.id" :class="{ 'has-background-grey-lighter': !keyword.active }">
               <td>{{ keyword.keyword }}</td>
               <td>
-                <button @click="deleteKeyword(keyword.id)" class="button is-danger is-small">Delete</button>
+                <div class="buttons">
+                  <button v-if="keyword.active" @click="deactivateKeyword(keyword.id)" class="button is-warning is-small">Deactivate</button>
+                  <button v-else @click="activateKeyword(keyword.id)" class="button is-success is-small">Activate</button>
+                  <button @click="deleteKeyword(keyword.id)" class="button is-danger is-small">Delete</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -60,6 +64,14 @@ onMounted(async () => {
   }
 })
 
+const deactivateKeyword = async (keywordId) => {
+  try {
+    await store.deactivateKeyword(keywordId)
+  } catch (error) {
+    console.error('Error deactivating keyword:', error)
+  }
+}
+
 const deleteKeyword = async (keywordId) => {
   try {
     await store.deleteKeyword(keywordId)
@@ -73,6 +85,14 @@ const deleteAllKeywords = async (projectId) => {
     await store.deleteAllKeywords(projectId)
   } catch (error) {
     console.error('Error deleting all keywords:', error)
+  }
+}
+
+const activateKeyword = async (keywordId) => {
+  try {
+    await store.activateKeyword(keywordId)
+  } catch (error) {
+    console.error('Error activating keyword:', error)
   }
 }
 </script>
