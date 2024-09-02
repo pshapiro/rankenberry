@@ -13,15 +13,22 @@ watch(() => route.meta.title, (newTitle) => {
 <template>
   <div id="app">
     <nav class="navbar is-light" role="navigation" aria-label="main navigation">
+      <div class="navbar-brand">
+        <a class="navbar-item" href="/">
+          <span class="has-text-weight-bold is-size-4">Rankenberry</span>
+        </a>
+      </div>
       <div class="navbar-menu">
         <div class="navbar-start">
-          <router-link to="/" class="navbar-item">Home</router-link>
+          <router-link to="/" class="navbar-item">Home / Rankings</router-link>
           <router-link to="/add" class="navbar-item">Add Project/Keywords</router-link>
           <router-link to="/keyword-management" class="navbar-item">Keyword Management</router-link>
         </div>
       </div>
     </nav>
-    <router-view></router-view>
+    <div class="container">
+      <router-view></router-view>
+    </div>
   </div>
 </template>
 
@@ -36,7 +43,10 @@ watch(() => route.meta.title, (newTitle) => {
   width: 100%;
 }
 
-.section {
+.container {
   flex-grow: 1;
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 </style>
