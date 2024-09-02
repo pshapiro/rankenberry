@@ -85,5 +85,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
-- Thanks to [API Provider Name] for providing the SERP data API
+- Thanks to SpaceSERP for providing the SERP data API
 - Vue.js and FastAPI communities for their excellent documentation and tools
