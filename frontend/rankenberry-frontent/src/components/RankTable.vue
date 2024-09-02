@@ -60,6 +60,7 @@
                 {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
               </button>
               <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
+              <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
         </tr>
@@ -174,6 +175,17 @@ const formatDate = (dateString) => {
 const closeSerpDetails = () => {
   selectedSerpData.value = null
   selectedKeyword.value = ''
+}
+
+const deleteRankData = async (id) => {
+  if (confirm('Are you sure you want to delete this rank data?')) {
+    try {
+      await store.deleteRankData(id)
+      await store.fetchRankData()
+    } catch (error) {
+      console.error('Error deleting rank data:', error)
+    }
+  }
 }
 </script>
 

@@ -165,6 +165,15 @@ export const useMainStore = defineStore('main', {
         console.error('Error deleting all keywords:', error)
         throw error
       }
+    },
+    async deleteRankData(id) {
+      try {
+        await axios.delete(`${API_URL}/serp_data/${id}`)
+        this.rankData = this.rankData.filter(item => item.id !== id)
+      } catch (error) {
+        console.error('Error deleting rank data:', error)
+        throw error
+      }
     }
   }
 })

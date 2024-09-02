@@ -61,7 +61,8 @@ def init_db():
                      keyword_id INTEGER,
                      date TEXT NOT NULL,
                      rank INTEGER,
-                     full_data TEXT NOT NULL)''')
+                     full_data TEXT NOT NULL,
+                     FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
     conn.commit()
     conn.close()
 
@@ -240,6 +241,15 @@ async def activate_keyword(keyword_id: int):
     conn.commit()
     conn.close()
     return {"message": f"Keyword ID {keyword_id} activated successfully"}
+
+@app.delete("/api/serp_data/{serp_data_id}")
+async def delete_serp_data(serp_data_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('DELETE FROM serp_data WHERE id = ?', (serp_data_id,))
+    conn.commit()
+    conn.close()
+    return {"message": f"SERP data ID {serp_data_id} deleted successfully"}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
