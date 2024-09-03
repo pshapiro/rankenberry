@@ -9,7 +9,7 @@ import aiohttp
 from database import add_serp_data, get_keywords, get_all_keywords, delete_keyword_by_id, delete_keywords_by_project
 import json
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 load_dotenv()
 
@@ -45,6 +45,9 @@ class Tag(BaseModel):
 
 class TagCreate(BaseModel):
     name: str
+
+class SerpDataRequest(BaseModel):
+    tag_id: Optional[int] = None
 
 # Database functions
 def get_db_connection():
@@ -129,13 +132,50 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
     return {"id": keyword_id, "project_id": project_id, **keyword.dict()}
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_and_store_serp_data(project_id: int):
-    keywords = await get_keywords(project_id)
+async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest):
+    tag_id = request.tag_id
+    keywords = await get_keywords(project_id, tag_id)
     for keyword in keywords:
         if keyword['active']:
             serp_data = await fetch_serp_data(keyword['keyword'])
             add_serp_data(keyword['id'], serp_data)
     return {"message": "SERP data fetched and stored successfully for active keywords"}
+
+@app.post("/api/fetch-serp-data-by-tag/{tag_id}")
+async def fetch_and_store_serp_data_by_tag(tag_id: int):
+    keywords = await get_keywords_by_tag(tag_id)
+    for keyword in keywords:
+        if keyword['active']:
+            serp_data = await fetch_serp_data(keyword['keyword'])
+            add_serp_data(keyword['id'], serp_data)
+    return {"message": "SERP data fetched and stored successfully for active keywords with the specified tag"}
+
+async def get_keywords(project_id: int, tag_id: Optional[int] = None):
+    conn = get_db_connection()
+    c = conn.cursor()
+    if tag_id:
+        c.execute('''
+            SELECT DISTINCT k.* FROM keywords k
+            JOIN keyword_tags kt ON k.id = kt.keyword_id
+            WHERE k.project_id = ? AND kt.tag_id = ?
+        ''', (project_id, tag_id))
+    else:
+        c.execute("SELECT * FROM keywords WHERE project_id = ?", (project_id,))
+    keywords = c.fetchall()
+    conn.close()
+    return [dict(zip(['id', 'project_id', 'keyword', 'active'], keyword)) for keyword in keywords]
+
+async def get_keywords_by_tag(tag_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT DISTINCT k.* FROM keywords k
+        JOIN keyword_tags kt ON k.id = kt.keyword_id
+        WHERE kt.tag_id = ?
+    ''', (tag_id,))
+    keywords = c.fetchall()
+    conn.close()
+    return [dict(zip(['id', 'project_id', 'keyword', 'active'], keyword)) for keyword in keywords]
 
 @app.get("/api/rankData")
 async def get_rank_data():

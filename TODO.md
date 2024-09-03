@@ -4,7 +4,7 @@
 
 - [ ] Add error handling for API requests
 - [ ] Implement pagination for large data sets
-- [ ] Keyword tagging system
+- [x] Keyword tagging system
 - [ ] Graphing of SERP data
 - [ ] Google Search Console Integration
 - [ ] 7 day rolling averages

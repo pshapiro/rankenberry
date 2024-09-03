@@ -62,13 +62,23 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
-    async fetchSerpData(projectId) {
+    async fetchSerpData(projectId, tagId = null) {
       try {
-        const response = await axios.post(`${API_URL}/fetch-serp-data/${projectId}`)
+        const response = await axios.post(`${API_URL}/fetch-serp-data/${projectId}`, { tag_id: tagId })
         await this.fetchRankData()
         return response.data
       } catch (error) {
         console.error('Error fetching SERP data:', error)
+        throw error
+      }
+    },
+    async fetchSerpDataByTag(tagId) {
+      try {
+        const response = await axios.post(`${API_URL}/fetch-serp-data-by-tag/${tagId}`)
+        await this.fetchRankData()
+        return response.data
+      } catch (error) {
+        console.error('Error fetching SERP data by tag:', error)
         throw error
       }
     },

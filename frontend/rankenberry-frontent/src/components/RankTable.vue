@@ -12,8 +12,20 @@
           </select>
         </div>
       </div>
+      <div class="control is-expanded">
+        <div class="select is-fullwidth">
+          <select v-model="selectedTag">
+            <option value="">All Tags</option>
+            <option v-for="tag in tags" :key="tag.id" :value="tag.id">
+              {{ tag.name }}
+            </option>
+          </select>
+        </div>
+      </div>
       <div class="control">
-        <button @click="fetchSerpData" :disabled="!selectedProject" class="button is-primary">Fetch Latest SERP Data</button>
+        <button @click="fetchSerpData" :disabled="!selectedProject && !selectedTag" class="button is-primary">
+          Fetch Latest SERP Data
+        </button>
       </div>
     </div>
     <table class="table is-fullwidth is-striped is-hoverable">
@@ -25,6 +37,7 @@
           <th>Rank</th>
           <th>Change</th>
           <th>Actions</th>
+          <th>Tags</th>
         </tr>
       </thead>
       <tbody>
@@ -63,6 +76,13 @@
               <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
+          <td>
+            <div class="tags">
+              <span v-for="tag in item.tags" :key="tag.id" class="tag is-info is-small">
+                {{ tag.name }}
+              </span>
+            </div>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -80,28 +100,46 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 
 const store = useMainStore()
-const { rankData, projects } = storeToRefs(store)
+const { rankData, projects, tags } = storeToRefs(store)
 const selectedProject = ref('')
+const selectedTag = ref('')
 const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
   store.fetchProjects()
   store.fetchRankData()
+  store.fetchTags()
+  await loadKeywordTags()
 })
 
-const filteredRankData = computed(() => {
-  if (selectedProject.value) {
-    return rankData.value.filter(item => item.project_id === selectedProject.value)
+const loadKeywordTags = async () => {
+  for (const item of rankData.value) {
+    item.tags = await store.getKeywordTags(item.keyword_id)
   }
-  return rankData.value
+}
+
+const filteredRankData = computed(() => {
+  let filtered = rankData.value
+
+  if (selectedProject.value) {
+    filtered = filtered.filter(item => item.project_id === selectedProject.value)
+  }
+
+  if (selectedTag.value) {
+    filtered = filtered.filter(item => 
+      item.tags && item.tags.some(tag => tag.id === selectedTag.value)
+    )
+  }
+
+  return filtered
 })
 
 const rankChanges = computed(() => {
@@ -118,15 +156,19 @@ const rankChanges = computed(() => {
 })
 
 const fetchSerpData = async () => {
-  if (selectedProject.value) {
-    isLoading.value = true
-    try {
-      await store.fetchSerpData(selectedProject.value)
-    } catch (error) {
-      console.error('Error fetching SERP data:', error)
-    } finally {
-      isLoading.value = false
+  isLoading.value = true
+  try {
+    if (selectedProject.value) {
+      await store.fetchSerpData(selectedProject.value, selectedTag.value)
+    } else if (selectedTag.value) {
+      await store.fetchSerpDataByTag(selectedTag.value)
     }
+    await store.fetchRankData()
+    await loadKeywordTags()
+  } catch (error) {
+    console.error('Error fetching SERP data:', error)
+  } finally {
+    isLoading.value = false
   }
 }
 
@@ -187,6 +229,10 @@ const deleteRankData = async (id) => {
     }
   }
 }
+
+watch([selectedProject, selectedTag], async () => {
+  await loadKeywordTags()
+})
 </script>
 
 <style scoped>
