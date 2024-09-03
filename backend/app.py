@@ -10,6 +10,8 @@ from database import add_serp_data, get_keywords, get_all_keywords, delete_keywo
 import json
 from datetime import datetime
 from typing import List, Optional
+import asyncio
+from asyncio import Semaphore
 
 load_dotenv()
 
@@ -131,15 +133,25 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
     conn.close()
     return {"id": keyword_id, "project_id": project_id, **keyword.dict()}
 
+CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
+
 @app.post("/api/fetch-serp-data/{project_id}")
 async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
     tag_id = request.tag_id if request else None
     keywords = await get_keywords(project_id, tag_id)
-    for keyword in keywords:
-        if keyword['active']:
+    active_keywords = [kw for kw in keywords if kw['active']]
+    
+    semaphore = Semaphore(CONCURRENT_REQUESTS)
+    
+    async def fetch_and_store(keyword):
+        async with semaphore:
             serp_data = await fetch_serp_data(keyword['keyword'])
             add_serp_data(keyword['id'], serp_data)
-    return {"message": "SERP data fetched and stored successfully for active keywords"}
+    
+    tasks = [fetch_and_store(keyword) for keyword in active_keywords]
+    await asyncio.gather(*tasks)
+    
+    return {"message": f"SERP data fetched and stored successfully for {len(active_keywords)} active keywords"}
 
 @app.post("/api/fetch-serp-data-by-tag/{tag_id}")
 async def fetch_and_store_serp_data_by_tag(tag_id: int):
@@ -221,6 +233,7 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
     raise HTTPException(status_code=404, detail="Keyword not found")
 
 async def fetch_serp_data(keyword):
+    await asyncio.sleep(0.1)  # Add a small delay to avoid overwhelming the API
     url = "https://api.spaceserp.com/google/search"
     params = {
         "apiKey": SPACESERP_API_KEY,
