@@ -9,6 +9,7 @@ import aiohttp
 from database import add_serp_data, get_keywords, get_all_keywords, delete_keyword_by_id, delete_keywords_by_project
 import json
 from datetime import datetime
+from typing import List
 
 load_dotenv()
 
@@ -38,6 +39,13 @@ class Keyword(KeywordBase):
     id: int
     project_id: int
 
+class Tag(BaseModel):
+    id: int
+    name: str
+
+class TagCreate(BaseModel):
+    name: str
+
 # Database functions
 def get_db_connection():
     conn = sqlite3.connect('seo_rank_tracker.db')
@@ -65,6 +73,16 @@ def init_db():
                   rank INTEGER,
                   full_data TEXT NOT NULL,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS tags
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL UNIQUE)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS keyword_tags
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  keyword_id INTEGER,
+                  tag_id INTEGER,
+                  FOREIGN KEY (keyword_id) REFERENCES keywords (id),
+                  FOREIGN KEY (tag_id) REFERENCES tags (id),
+                  UNIQUE(keyword_id, tag_id))''')
     conn.commit()
     conn.close()
 
@@ -274,6 +292,88 @@ async def delete_project(project_id: int):
     conn.commit()
     conn.close()
     return {"message": f"Project ID {project_id} deleted successfully"}
+
+@app.post("/api/tags", response_model=Tag)
+async def create_tag(tag: TagCreate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('INSERT INTO tags (name) VALUES (?)', (tag.name,))
+        tag_id = cursor.lastrowid
+        conn.commit()
+        return {"id": tag_id, "name": tag.name}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Tag already exists")
+    finally:
+        conn.close()
+
+@app.get("/api/tags", response_model=List[Tag])
+async def get_all_tags():
+    conn = get_db_connection()
+    tags = conn.execute('SELECT * FROM tags').fetchall()
+    conn.close()
+    return [{"id": tag['id'], "name": tag['name']} for tag in tags]
+
+@app.post("/api/keywords/{keyword_id}/tags/{tag_id}")
+async def add_tag_to_keyword(keyword_id: int, tag_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('INSERT INTO keyword_tags (keyword_id, tag_id) VALUES (?, ?)', (keyword_id, tag_id))
+        conn.commit()
+        return {"message": "Tag added to keyword successfully"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Tag already added to this keyword")
+    finally:
+        conn.close()
+
+@app.delete("/api/keywords/{keyword_id}/tags/{tag_id}")
+async def remove_tag_from_keyword(keyword_id: int, tag_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM keyword_tags WHERE keyword_id = ? AND tag_id = ?', (keyword_id, tag_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Tag removed from keyword successfully"}
+
+@app.delete("/api/tags/{tag_id}")
+async def delete_tag(tag_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM keyword_tags WHERE tag_id = ?', (tag_id,))
+    cursor.execute('DELETE FROM tags WHERE id = ?', (tag_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Tag deleted successfully"}
+
+@app.post("/api/keywords/bulk-tag")
+async def bulk_tag_keywords(data: dict):
+    keyword_ids = data.get('keyword_ids', [])
+    tag_id = data.get('tag_id')
+    if not keyword_ids or not tag_id:
+        raise HTTPException(status_code=400, detail="Missing keyword_ids or tag_id")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        for keyword_id in keyword_ids:
+            cursor.execute('INSERT OR IGNORE INTO keyword_tags (keyword_id, tag_id) VALUES (?, ?)', (keyword_id, tag_id))
+        conn.commit()
+        return {"message": "Tags added to keywords successfully"}
+    finally:
+        conn.close()
+
+@app.get("/api/keywords/{keyword_id}/tags", response_model=List[Tag])
+async def get_keyword_tags(keyword_id: int):
+    conn = get_db_connection()
+    tags = conn.execute('''
+        SELECT t.id, t.name
+        FROM tags t
+        JOIN keyword_tags kt ON t.id = kt.tag_id
+        WHERE kt.keyword_id = ?
+    ''', (keyword_id,)).fetchall()
+    conn.close()
+    return [{"id": tag['id'], "name": tag['name']} for tag in tags]
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

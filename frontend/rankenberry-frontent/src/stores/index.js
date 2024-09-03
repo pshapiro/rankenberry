@@ -7,7 +7,8 @@ export const useMainStore = defineStore('main', {
   state: () => ({
     projects: [],
     keywords: [],
-    rankData: []
+    rankData: [],
+    tags: [],
   }),
   actions: {
     async fetchProjects() {
@@ -197,6 +198,67 @@ export const useMainStore = defineStore('main', {
         console.error('Error deleting project:', error)
         throw error
       }
-    }
+    },
+    async fetchTags() {
+      try {
+        const response = await axios.get(`${API_URL}/tags`)
+        this.tags = response.data
+      } catch (error) {
+        console.error('Error fetching tags:', error)
+        throw error
+      }
+    },
+    async createTag(name) {
+      try {
+        const response = await axios.post(`${API_URL}/tags`, { name })
+        this.tags.push(response.data)
+        return response.data
+      } catch (error) {
+        console.error('Error creating tag:', error)
+        throw error
+      }
+    },
+    async addTagToKeyword(keywordId, tagId) {
+      try {
+        await axios.post(`${API_URL}/keywords/${keywordId}/tags/${tagId}`)
+      } catch (error) {
+        console.error('Error adding tag to keyword:', error)
+        throw error
+      }
+    },
+    async removeTagFromKeyword(keywordId, tagId) {
+      try {
+        await axios.delete(`${API_URL}/keywords/${keywordId}/tags/${tagId}`)
+      } catch (error) {
+        console.error('Error removing tag from keyword:', error)
+        throw error
+      }
+    },
+    async deleteTag(tagId) {
+      try {
+        await axios.delete(`${API_URL}/tags/${tagId}`)
+        this.tags = this.tags.filter(tag => tag.id !== tagId)
+      } catch (error) {
+        console.error('Error deleting tag:', error)
+        throw error
+      }
+    },
+    async bulkTagKeywords(keywordIds, tagId) {
+      try {
+        await axios.post(`${API_URL}/keywords/bulk-tag`, { keyword_ids: keywordIds, tag_id: tagId })
+      } catch (error) {
+        console.error('Error bulk tagging keywords:', error)
+        throw error
+      }
+    },
+    async getKeywordTags(keywordId) {
+      try {
+        const response = await axios.get(`${API_URL}/keywords/${keywordId}/tags`)
+        return response.data
+      } catch (error) {
+        console.error('Error fetching keyword tags:', error)
+        throw error
+      }
+    },
   }
 })
