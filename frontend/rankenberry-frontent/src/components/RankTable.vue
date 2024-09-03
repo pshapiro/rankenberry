@@ -270,14 +270,19 @@ const latestRankData = computed(() => {
 
 // Update existing computed properties to use latestRankData
 const averageRank = computed(() => {
-  const rankedKeywords = latestRankData.value.filter(item => item.rank !== null && item.rank !== -1)
-  if (rankedKeywords.length === 0) return 'N/A'
-  const sum = rankedKeywords.reduce((acc, item) => acc + item.rank, 0)
-  return (sum / rankedKeywords.length).toFixed(2)
+  if (latestRankData.value.length === 0) return 'N/A'
+  const sum = latestRankData.value.reduce((acc, item) => {
+    // Consider null or -1 as position 0
+    return acc + (item.rank !== null && item.rank !== -1 ? item.rank : 0)
+  }, 0)
+  return (sum / latestRankData.value.length).toFixed(2)
 })
 
 const keywordsInTop10 = computed(() => {
-  return latestRankData.value.filter(item => item.rank !== null && item.rank !== -1 && item.rank <= 10).length
+  return latestRankData.value.filter(item => {
+    // Consider 0 (unranked) as not in top 10
+    return item.rank !== null && item.rank !== -1 && item.rank <= 10
+  }).length
 })
 
 const keywordsNotRanked = computed(() => {
