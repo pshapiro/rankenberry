@@ -31,7 +31,7 @@
 
     <!-- New View Details Section -->
     <div class="box mt-4 mb-4">
-      <h3 class="title is-4">View Details</h3>
+      <h3 class="title is-4">Keyword Summary</h3>
       <div class="columns">
         <div class="column">
           <p><strong>Total Keywords:</strong> {{ latestRankData.length }}</p>
@@ -147,7 +147,7 @@ const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
 const currentPage = ref(1)
-const itemsPerPage = 20
+const itemsPerPage = 10
 
 onMounted(async () => {
   store.fetchProjects()
