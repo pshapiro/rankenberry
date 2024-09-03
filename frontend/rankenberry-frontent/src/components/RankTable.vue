@@ -28,6 +28,26 @@
         </button>
       </div>
     </div>
+
+    <!-- New View Details Section -->
+    <div class="box mt-4 mb-4">
+      <h3 class="title is-4">View Details</h3>
+      <div class="columns">
+        <div class="column">
+          <p><strong>Total Keywords:</strong> {{ latestRankData.length }}</p>
+          <p><strong>Average Rank:</strong> {{ averageRank }}</p>
+        </div>
+        <div class="column">
+          <p><strong>Keywords in Top 10:</strong> {{ keywordsInTop10 }}</p>
+          <p><strong>Keywords Not Ranked:</strong> {{ keywordsNotRanked }}</p>
+        </div>
+        <div class="column">
+          <p><strong>Selected Project:</strong> {{ selectedProjectName }}</p>
+          <p><strong>Selected Tag:</strong> {{ selectedTagName }}</p>
+        </div>
+      </div>
+    </div>
+
     <table class="table is-fullwidth is-striped is-hoverable">
       <thead>
         <tr>
@@ -232,6 +252,48 @@ const deleteRankData = async (id) => {
 
 watch([selectedProject, selectedTag], async () => {
   await loadKeywordTags()
+})
+
+// New computed property to get latest data for each keyword
+const latestRankData = computed(() => {
+  const keywordMap = new Map()
+  
+  filteredRankData.value.forEach(item => {
+    const existingItem = keywordMap.get(item.keyword_id)
+    if (!existingItem || new Date(item.date) > new Date(existingItem.date)) {
+      keywordMap.set(item.keyword_id, item)
+    }
+  })
+  
+  return Array.from(keywordMap.values())
+})
+
+// Update existing computed properties to use latestRankData
+const averageRank = computed(() => {
+  const rankedKeywords = latestRankData.value.filter(item => item.rank !== null && item.rank !== -1)
+  if (rankedKeywords.length === 0) return 'N/A'
+  const sum = rankedKeywords.reduce((acc, item) => acc + item.rank, 0)
+  return (sum / rankedKeywords.length).toFixed(2)
+})
+
+const keywordsInTop10 = computed(() => {
+  return latestRankData.value.filter(item => item.rank !== null && item.rank !== -1 && item.rank <= 10).length
+})
+
+const keywordsNotRanked = computed(() => {
+  return latestRankData.value.filter(item => item.rank === null || item.rank === -1).length
+})
+
+const selectedProjectName = computed(() => {
+  if (!selectedProject.value) return 'All Projects'
+  const project = projects.value.find(p => p.id === selectedProject.value)
+  return project ? project.name : 'Unknown Project'
+})
+
+const selectedTagName = computed(() => {
+  if (!selectedTag.value) return 'All Tags'
+  const tag = tags.value.find(t => t.id === selectedTag.value)
+  return tag ? tag.name : 'Unknown Tag'
 })
 </script>
 
