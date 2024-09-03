@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
@@ -132,8 +132,8 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
     return {"id": keyword_id, "project_id": project_id, **keyword.dict()}
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest):
-    tag_id = request.tag_id
+async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
+    tag_id = request.tag_id if request else None
     keywords = await get_keywords(project_id, tag_id)
     for keyword in keywords:
         if keyword['active']:
