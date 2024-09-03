@@ -61,7 +61,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="item in filteredRankData" :key="item.id">
+        <tr v-for="item in paginatedRankData" :key="item.id">
           <td>{{ formatDate(item.date) }}</td>
           <td>{{ item.keyword }}</td>
           <td>{{ item.domain }}</td>
@@ -106,6 +106,20 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- Pagination -->
+    <nav class="pagination is-centered" role="navigation" aria-label="pagination">
+      <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
+      <a class="pagination-next" @click="nextPage" :disabled="currentPage === totalPages">Next page</a>
+      <ul class="pagination-list">
+        <li v-for="page in displayedPages" :key="page">
+          <a class="pagination-link" :class="{ 'is-current': page === currentPage }" @click="goToPage(page)">
+            {{ page }}
+          </a>
+        </li>
+      </ul>
+    </nav>
+
     <div v-if="selectedSerpData" class="box mt-4 serp-details-container">
       <div class="serp-details-header">
         <h3 class="title is-4">SERP Details for "{{ selectedKeyword }}"</h3>
@@ -132,6 +146,8 @@ const selectedTag = ref('')
 const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
+const currentPage = ref(1)
+const itemsPerPage = 20
 
 onMounted(async () => {
   store.fetchProjects()
@@ -159,7 +175,43 @@ const filteredRankData = computed(() => {
     )
   }
 
-  return filtered
+  // Sort the filtered data by date, most recent first
+  return filtered.sort((a, b) => new Date(b.date) - new Date(a.date))
+})
+
+const latestRankData = computed(() => {
+  const keywordMap = new Map()
+  
+  filteredRankData.value.forEach(item => {
+    if (!keywordMap.has(item.keyword_id)) {
+      keywordMap.set(item.keyword_id, item)
+    }
+  })
+  
+  return Array.from(keywordMap.values())
+})
+
+const paginatedRankData = computed(() => {
+  const startIndex = (currentPage.value - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  return filteredRankData.value.slice(startIndex, endIndex)
+})
+
+const totalPages = computed(() => Math.ceil(filteredRankData.value.length / itemsPerPage))
+
+const displayedPages = computed(() => {
+  const range = 2
+  let start = Math.max(1, currentPage.value - range)
+  let end = Math.min(totalPages.value, currentPage.value + range)
+
+  if (start > 1) {
+    start = Math.max(1, end - range * 2)
+  }
+  if (end < totalPages.value) {
+    end = Math.min(totalPages.value, start + range * 2)
+  }
+
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
 })
 
 const rankChanges = computed(() => {
@@ -173,6 +225,57 @@ const rankChanges = computed(() => {
     }
   })
   return changes
+})
+
+const averageRank = computed(() => {
+  if (latestRankData.value.length === 0) return 'N/A'
+  const sum = latestRankData.value.reduce((acc, item) => {
+    return acc + (item.rank !== null && item.rank !== -1 ? item.rank : 0)
+  }, 0)
+  return (sum / latestRankData.value.length).toFixed(2)
+})
+
+const keywordsInTop10 = computed(() => {
+  return latestRankData.value.filter(item => {
+    return item.rank !== null && item.rank !== -1 && item.rank <= 10
+  }).length
+})
+
+const keywordsNotRanked = computed(() => {
+  return latestRankData.value.filter(item => item.rank === null || item.rank === -1).length
+})
+
+const selectedProjectName = computed(() => {
+  if (!selectedProject.value) return 'All Projects'
+  const project = projects.value.find(p => p.id === selectedProject.value)
+  return project ? project.name : 'Unknown Project'
+})
+
+const selectedTagName = computed(() => {
+  if (!selectedTag.value) return 'All Tags'
+  const tag = tags.value.find(t => t.id === selectedTag.value)
+  return tag ? tag.name : 'Unknown Tag'
+})
+
+const previousPage = () => {
+  if (currentPage.value > 1) {
+    currentPage.value--
+  }
+}
+
+const nextPage = () => {
+  if (currentPage.value < totalPages.value) {
+    currentPage.value++
+  }
+}
+
+const goToPage = (page) => {
+  currentPage.value = page
+}
+
+watch([selectedProject, selectedTag], async () => {
+  currentPage.value = 1
+  await loadKeywordTags()
 })
 
 const fetchSerpData = async () => {
@@ -200,7 +303,7 @@ const viewDetails = async (item) => {
     } else {
       try {
         const fullSerpData = await store.fetchFullSerpData(item.id)
-        console.log('Full SERP data fetched:', fullSerpData) // Add this line
+        console.log('Full SERP data fetched:', fullSerpData)
         selectedSerpData.value = fullSerpData
         console.log('Fetched SERP data:', selectedSerpData.value)
         selectedKeyword.value = item.keyword
@@ -249,57 +352,6 @@ const deleteRankData = async (id) => {
     }
   }
 }
-
-watch([selectedProject, selectedTag], async () => {
-  await loadKeywordTags()
-})
-
-// New computed property to get latest data for each keyword
-const latestRankData = computed(() => {
-  const keywordMap = new Map()
-  
-  filteredRankData.value.forEach(item => {
-    const existingItem = keywordMap.get(item.keyword_id)
-    if (!existingItem || new Date(item.date) > new Date(existingItem.date)) {
-      keywordMap.set(item.keyword_id, item)
-    }
-  })
-  
-  return Array.from(keywordMap.values())
-})
-
-// Update existing computed properties to use latestRankData
-const averageRank = computed(() => {
-  if (latestRankData.value.length === 0) return 'N/A'
-  const sum = latestRankData.value.reduce((acc, item) => {
-    // Consider null or -1 as position 0
-    return acc + (item.rank !== null && item.rank !== -1 ? item.rank : 0)
-  }, 0)
-  return (sum / latestRankData.value.length).toFixed(2)
-})
-
-const keywordsInTop10 = computed(() => {
-  return latestRankData.value.filter(item => {
-    // Consider 0 (unranked) as not in top 10
-    return item.rank !== null && item.rank !== -1 && item.rank <= 10
-  }).length
-})
-
-const keywordsNotRanked = computed(() => {
-  return latestRankData.value.filter(item => item.rank === null || item.rank === -1).length
-})
-
-const selectedProjectName = computed(() => {
-  if (!selectedProject.value) return 'All Projects'
-  const project = projects.value.find(p => p.id === selectedProject.value)
-  return project ? project.name : 'Unknown Project'
-})
-
-const selectedTagName = computed(() => {
-  if (!selectedTag.value) return 'All Tags'
-  const tag = tags.value.find(t => t.id === selectedTag.value)
-  return tag ? tag.name : 'Unknown Tag'
-})
 </script>
 
 <style scoped>
@@ -345,5 +397,11 @@ const selectedTagName = computed(() => {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.pagination-link.is-current {
+  background-color: #3273dc;
+  border-color: #3273dc;
+  color: #fff;
 }
 </style>
