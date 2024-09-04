@@ -5,7 +5,9 @@
 - [ ] Add error handling for API requests
 - [x] Implement pagination for large data sets
 - [x] Keyword tagging system
-- [ ] Graphing of SERP data
+- [x] Graphing of SERP data for individual keywords
+- [ ] Graphing of SERP data for tags/projects
+- [ ] Share of voice view for tags/projects
 - [ ] Google Search Console Integration
 - [ ] 7 day rolling averages
 - [ ] Conversion estimates based on 1st party data if rank changes
@@ -16,6 +18,7 @@
 - [ ] Automatic intent matching and clustering
 - [ ] System for scheduling like cron
 - [ ] Search Volume data added to keywords
+- [ ] Calendar based filtering
 
 ## Medium Priority
 

@@ -165,7 +165,7 @@ const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
 const currentPage = ref(1)
-const itemsPerPage = 20
+const itemsPerPage = 10
 const isKeywordHistoryModalOpen = ref(false)
 const selectedKeywordId = ref(null)
 const keywordHistory = ref([])
@@ -378,7 +378,9 @@ const viewKeywordHistory = async (item) => {
   selectedKeywordId.value = item.keyword_id
   try {
     const history = await store.fetchKeywordHistory(item.keyword_id)
+    console.log('Fetched history:', history)
     keywordHistory.value = history.sort((a, b) => new Date(b.date) - new Date(a.date)) // Sort by date, most recent first
+    console.log('Sorted history:', keywordHistory.value)
     isKeywordHistoryModalOpen.value = true
   } catch (error) {
     console.error('Error fetching keyword history:', error)
