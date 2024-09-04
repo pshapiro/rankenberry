@@ -7,6 +7,30 @@
         <button class="delete" aria-label="close" @click="close"></button>
       </header>
       <section class="modal-card-body">
+        <div class="field">
+          <DatePicker v-model="dateRange" is-range>
+            <template v-slot="{ inputValue, inputEvents }">
+              <div class="field has-addons">
+                <div class="control">
+                  <input
+                    class="input"
+                    :value="inputValue.start"
+                    v-on="inputEvents.start"
+                    placeholder="Start date"
+                  />
+                </div>
+                <div class="control">
+                  <input
+                    class="input"
+                    :value="inputValue.end"
+                    v-on="inputEvents.end"
+                    placeholder="End date"
+                  />
+                </div>
+              </div>
+            </template>
+          </DatePicker>
+        </div>
         <div ref="chart" class="chart-container"></div>
         <div class="table-container mt-4">
           <table class="table is-fullwidth is-striped is-hoverable">
@@ -47,6 +71,7 @@
 <script setup>
 import { ref, onMounted, watch, onUnmounted, nextTick, computed } from 'vue'
 import Plotly from 'plotly.js-dist-min'
+import { DatePicker } from 'v-calendar'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -58,6 +83,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'export'])
 
 const chart = ref(null)
+const dateRange = ref({ start: null, end: null })
 
 const close = () => {
   emit('close')
@@ -67,8 +93,25 @@ const exportHistory = () => {
   emit('export')
 }
 
+const filteredHistory = computed(() => {
+  if (!dateRange.value.start || !dateRange.value.end) return props.history
+
+  return props.history.filter(entry => {
+    const entryDate = new Date(entry.date)
+    entryDate.setHours(0, 0, 0, 0)
+
+    const startDate = new Date(dateRange.value.start)
+    startDate.setHours(0, 0, 0, 0)
+
+    const endDate = new Date(dateRange.value.end)
+    endDate.setHours(23, 59, 59, 999)
+
+    return entryDate >= startDate && entryDate <= endDate
+  })
+})
+
 const sortedHistory = computed(() => {
-  return [...props.history].sort((a, b) => new Date(b.date) - new Date(a.date))
+  return [...filteredHistory.value].sort((a, b) => new Date(b.date) - new Date(a.date))
 })
 
 const formatDate = (dateString) => {
@@ -91,15 +134,15 @@ const getChangeText = (currentRank, previousRank) => {
 }
 
 const createChart = () => {
-  if (!props.history || props.history.length === 0) {
+  if (!filteredHistory.value || filteredHistory.value.length === 0) {
     console.log('No history data available')
     return
   }
 
-  console.log('Original history:', props.history)
+  console.log('Original history:', filteredHistory.value)
 
   // Group data by date and find the best rank for each day
-  const dailyBestRanks = props.history.reduce((acc, entry) => {
+  const dailyBestRanks = filteredHistory.value.reduce((acc, entry) => {
     const date = new Date(entry.date + 'Z').toISOString().split('T')[0]
     if (!acc[date] || (entry.rank !== -1 && (acc[date].rank === -1 || entry.rank < acc[date].rank))) {
       acc[date] = { date, rank: entry.rank }
@@ -174,9 +217,13 @@ const createChart = () => {
   })
 }
 
-watch(() => props.history, createChart, { deep: true })
+watch(dateRange, () => {
+  createChart()
+})
 
-onMounted(createChart)
+onMounted(() => {
+  createChart()
+})
 
 onUnmounted(() => {
   window.removeEventListener('resize', resizeChart)
@@ -199,6 +246,8 @@ watch(() => props.isOpen, (newValue) => {
 </script>
 
 <style scoped>
+@import 'v-calendar/dist/style.css';
+
 .modal-card {
   width: 90%;
   max-width: 1200px;

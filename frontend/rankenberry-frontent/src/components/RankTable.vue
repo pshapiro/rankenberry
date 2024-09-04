@@ -22,6 +22,30 @@
           </select>
         </div>
       </div>
+      <div class="control is-expanded">
+        <DatePicker v-model="dateRange" is-range>
+          <template v-slot="{ inputValue, inputEvents }">
+            <div class="field has-addons">
+              <div class="control">
+                <input
+                  class="input"
+                  :value="inputValue.start"
+                  v-on="inputEvents.start"
+                  placeholder="Start date"
+                />
+              </div>
+              <div class="control">
+                <input
+                  class="input"
+                  :value="inputValue.end"
+                  v-on="inputEvents.end"
+                  placeholder="End date"
+                />
+              </div>
+            </div>
+          </template>
+        </DatePicker>
+      </div>
       <div class="control">
         <button @click="fetchSerpData" :disabled="!selectedProject && !selectedTag" class="button is-primary">
           Fetch Latest SERP Data
@@ -156,6 +180,8 @@ import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
+import { DatePicker } from 'v-calendar'
+import 'v-calendar/dist/style.css'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
@@ -169,6 +195,7 @@ const itemsPerPage = 10
 const isKeywordHistoryModalOpen = ref(false)
 const selectedKeywordId = ref(null)
 const keywordHistory = ref([])
+const dateRange = ref({ start: null, end: null })
 
 onMounted(async () => {
   store.fetchProjects()
@@ -194,6 +221,21 @@ const filteredRankData = computed(() => {
     filtered = filtered.filter(item => 
       item.tags && item.tags.some(tag => tag.id === selectedTag.value)
     )
+  }
+
+  if (dateRange.value.start && dateRange.value.end) {
+    filtered = filtered.filter(item => {
+      const itemDate = new Date(item.date)
+      itemDate.setHours(0, 0, 0, 0) // Reset time to start of day
+      
+      const startDate = new Date(dateRange.value.start)
+      startDate.setHours(0, 0, 0, 0)
+      
+      const endDate = new Date(dateRange.value.end)
+      endDate.setHours(23, 59, 59, 999) // Set time to end of day
+      
+      return itemDate >= startDate && itemDate <= endDate
+    })
   }
 
   return filtered
@@ -293,7 +335,7 @@ const goToPage = (page) => {
   currentPage.value = page
 }
 
-watch([selectedProject, selectedTag], async () => {
+watch([selectedProject, selectedTag, dateRange], async () => {
   currentPage.value = 1
   await loadKeywordTags()
 })
@@ -432,6 +474,8 @@ const formatDateTime = (dateTimeString) => {
 </script>
 
 <style scoped>
+@import 'v-calendar/dist/style.css';
+
 .modal-card {
   width: 90%;
   max-width: 1200px;
@@ -468,5 +512,14 @@ const formatDateTime = (dateTimeString) => {
   background-color: #3273dc;
   border-color: #3273dc;
   color: #fff;
+}
+
+/* Add some basic styling for the date picker */
+.v-date-picker input {
+  width: 120px;
+}
+
+.field.has-addons {
+  flex-wrap: nowrap;
 }
 </style>

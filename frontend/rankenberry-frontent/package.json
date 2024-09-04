@@ -11,10 +11,12 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@popperjs/core": "^2.11.8",
     "axios": "^1.7.5",
     "bulma": "^1.0.2",
     "pinia": "^2.1.7",
     "plotly.js-dist-min": "^2.35.0",
+    "v-calendar": "^3.1.2",
     "vue": "^3.4.29",
     "vue-router": "^4.3.3"
   },
