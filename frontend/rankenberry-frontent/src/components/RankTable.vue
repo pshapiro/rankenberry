@@ -31,7 +31,7 @@
 
     <!-- New View Details Section -->
     <div class="box mt-4 mb-4">
-      <h3 class="title is-4">Keyword Summary</h3>
+      <h3 class="title is-4">View Details</h3>
       <div class="columns">
         <div class="column">
           <p><strong>Total Keywords:</strong> {{ latestRankData.length }}</p>
@@ -93,6 +93,7 @@
                 {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
               </button>
               <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
+              <button @click="exportKeywordHistory(item)" class="button is-small is-success">Export History</button>
               <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
@@ -120,13 +121,20 @@
       </ul>
     </nav>
 
-    <div v-if="selectedSerpData" class="box mt-4 serp-details-container">
-      <div class="serp-details-header">
-        <h3 class="title is-4">SERP Details for "{{ selectedKeyword }}"</h3>
-        <button @click="closeSerpDetails" class="delete"></button>
+    <!-- SERP Details Modal -->
+    <div class="modal" :class="{ 'is-active': selectedSerpData }">
+      <div class="modal-background" @click="closeSerpDetails"></div>
+      <div class="modal-card">
+        <header class="modal-card-head">
+          <p class="modal-card-title">SERP Details for "{{ selectedKeyword }}"</p>
+          <button class="delete" aria-label="close" @click="closeSerpDetails"></button>
+        </header>
+        <section class="modal-card-body">
+          <SerpDetails v-if="selectedSerpData" :serpData="selectedSerpData" :keyword="selectedKeyword" />
+        </section>
       </div>
-      <SerpDetails :serpData="selectedSerpData" :keyword="selectedKeyword" />
     </div>
+
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-spinner"></div>
     </div>
@@ -147,7 +155,7 @@ const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
 const currentPage = ref(1)
-const itemsPerPage = 10
+const itemsPerPage = 20
 
 onMounted(async () => {
   store.fetchProjects()
@@ -352,24 +360,49 @@ const deleteRankData = async (id) => {
     }
   }
 }
+
+const exportKeywordHistory = async (item) => {
+  try {
+    const response = await store.fetchKeywordHistory(item.keyword_id)
+    const csvContent = [
+      ['Date', 'Time', 'Rank'].join(','),
+      ...response.map(entry => {
+        const [date, time] = formatDateTime(entry.date)
+        return [date, time, entry.rank === null || entry.rank === -1 ? 'Not Ranked' : entry.rank].join(',')
+      })
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob)
+      link.setAttribute('href', url)
+      link.setAttribute('download', `keyword_history_${item.keyword}_${formatDate(new Date())}.csv`)
+      link.style.visibility = 'hidden'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
+  } catch (error) {
+    console.error('Error exporting keyword history:', error)
+    // You might want to show an error message to the user here
+  }
+}
+
+// Add this new function to format date and time separately
+const formatDateTime = (dateTimeString) => {
+  const date = new Date(dateTimeString)
+  return [
+    date.toLocaleDateString(),
+    date.toLocaleTimeString()
+  ]
+}
 </script>
 
 <style scoped>
-.serp-details-container {
-  position: relative;
-}
-
-.serp-details-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.serp-details-header .delete {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
+.modal-card {
+  width: 90%;
+  max-width: 1200px;
 }
 
 .loading-overlay {

@@ -428,5 +428,25 @@ async def get_keyword_tags(keyword_id: int):
     conn.close()
     return [{"id": tag['id'], "name": tag['name']} for tag in tags]
 
+class KeywordHistoryEntry(BaseModel):
+    date: str
+    rank: int
+
+@app.get("/api/keyword-history/{keyword_id}", response_model=List[KeywordHistoryEntry])
+async def get_keyword_history(keyword_id: int):
+    conn = get_db_connection()
+    history = conn.execute('''
+        SELECT date, rank
+        FROM serp_data
+        WHERE keyword_id = ?
+        ORDER BY date DESC
+    ''', (keyword_id,)).fetchall()
+    conn.close()
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="No history found for this keyword")
+    
+    return [{"date": entry['date'], "rank": entry['rank']} for entry in history]
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

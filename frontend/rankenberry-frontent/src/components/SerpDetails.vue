@@ -1,8 +1,10 @@
 <template>
-  <div v-if="serpData" class="serp-details box">
-    <h3 class="title is-3">SERP Details for "{{ keyword }}"</h3>
+  <div v-if="serpData" class="serp-details">
     <p class="subtitle">Date: {{ formatDate(serpData.date) }}</p>
     <h4 class="title is-4">Organic Results:</h4>
+    <div class="field">
+      <button @click="exportToCsv" class="button is-primary">Export to CSV</button>
+    </div>
     <div v-if="organicResults.length > 0" class="table-container">
       <table class="table is-fullwidth is-striped is-hoverable">
         <thead>
@@ -76,14 +78,47 @@ const extractDomain = (url) => {
     return url
   }
 }
+
+const exportToCsv = () => {
+  if (!organicResults.value.length) {
+    alert('No data to export')
+    return
+  }
+
+  const headers = ['Position', 'Domain', 'Title', 'Link', 'Description']
+  const csvContent = [
+    headers.join(','),
+    ...organicResults.value.map(result => [
+      result.position,
+      extractDomain(result.link),
+      `"${result.title.replace(/"/g, '""')}"`,
+      result.link,
+      `"${result.description.replace(/"/g, '""')}"`
+    ].join(','))
+  ].join('\n')
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob)
+    link.setAttribute('href', url)
+    link.setAttribute('download', `serp_details_${props.keyword}_${formatDate(props.serpData.date)}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+}
 </script>
 
 <style scoped>
 .serp-details {
   margin-top: 20px;
-  padding: 20px;
-  border: 1px solid #ccc;
-  border-radius: 5px;
+}
+
+.table-container {
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 table {
@@ -99,5 +134,13 @@ th, td {
 
 th {
   background-color: #f2f2f2;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.button.is-primary {
+  margin-right: 1rem;
 }
 </style>

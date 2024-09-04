@@ -271,5 +271,14 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
+    async fetchKeywordHistory(keywordId) {
+      try {
+        const response = await axios.get(`${API_URL}/keyword-history/${keywordId}`)
+        return response.data
+      } catch (error) {
+        console.error('Error fetching keyword history:', error)
+        throw error
+      }
+    },
   }
 })
