@@ -14,7 +14,7 @@
     "axios": "^1.7.5",
     "bulma": "^1.0.2",
     "pinia": "^2.1.7",
-    "plotly.js-dist-min": "^2.34.0",
+    "plotly.js-dist-min": "^2.35.0",
     "vue": "^3.4.29",
     "vue-router": "^4.3.3"
   },

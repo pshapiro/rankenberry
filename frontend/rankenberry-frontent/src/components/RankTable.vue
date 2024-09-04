@@ -93,7 +93,7 @@
                 {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
               </button>
               <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
-              <button @click="exportKeywordHistory(item)" class="button is-small is-success">Export History</button>
+              <button @click="viewKeywordHistory(item)" class="button is-small is-warning">View History</button>
               <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
@@ -135,6 +135,15 @@
       </div>
     </div>
 
+    <KeywordHistoryModal
+      :is-open="isKeywordHistoryModalOpen"
+      :keyword="selectedKeyword"
+      :keyword-id="selectedKeywordId"
+      :history="keywordHistory"
+      @close="closeKeywordHistoryModal"
+      @export="exportKeywordHistory"
+    />
+
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-spinner"></div>
     </div>
@@ -146,6 +155,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
+import KeywordHistoryModal from './KeywordHistoryModal.vue'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
@@ -156,6 +166,9 @@ const selectedKeyword = ref('')
 const isLoading = ref(false)
 const currentPage = ref(1)
 const itemsPerPage = 20
+const isKeywordHistoryModalOpen = ref(false)
+const selectedKeywordId = ref(null)
+const keywordHistory = ref([])
 
 onMounted(async () => {
   store.fetchProjects()
@@ -183,8 +196,7 @@ const filteredRankData = computed(() => {
     )
   }
 
-  // Sort the filtered data by date, most recent first
-  return filtered.sort((a, b) => new Date(b.date) - new Date(a.date))
+  return filtered
 })
 
 const latestRankData = computed(() => {
@@ -361,12 +373,31 @@ const deleteRankData = async (id) => {
   }
 }
 
-const exportKeywordHistory = async (item) => {
+const viewKeywordHistory = async (item) => {
+  selectedKeyword.value = item.keyword
+  selectedKeywordId.value = item.keyword_id
   try {
-    const response = await store.fetchKeywordHistory(item.keyword_id)
+    const history = await store.fetchKeywordHistory(item.keyword_id)
+    keywordHistory.value = history.sort((a, b) => new Date(b.date) - new Date(a.date)) // Sort by date, most recent first
+    isKeywordHistoryModalOpen.value = true
+  } catch (error) {
+    console.error('Error fetching keyword history:', error)
+    // You might want to show an error message to the user here
+  }
+}
+
+const closeKeywordHistoryModal = () => {
+  isKeywordHistoryModalOpen.value = false
+  selectedKeyword.value = ''
+  selectedKeywordId.value = null
+  keywordHistory.value = []
+}
+
+const exportKeywordHistory = async () => {
+  try {
     const csvContent = [
       ['Date', 'Time', 'Rank'].join(','),
-      ...response.map(entry => {
+      ...keywordHistory.value.map(entry => {
         const [date, time] = formatDateTime(entry.date)
         return [date, time, entry.rank === null || entry.rank === -1 ? 'Not Ranked' : entry.rank].join(',')
       })
@@ -377,7 +408,7 @@ const exportKeywordHistory = async (item) => {
     if (link.download !== undefined) {
       const url = URL.createObjectURL(blob)
       link.setAttribute('href', url)
-      link.setAttribute('download', `keyword_history_${item.keyword}_${formatDate(new Date())}.csv`)
+      link.setAttribute('download', `keyword_history_${selectedKeyword.value}_${formatDate(new Date())}.csv`)
       link.style.visibility = 'hidden'
       document.body.appendChild(link)
       link.click()
@@ -389,7 +420,6 @@ const exportKeywordHistory = async (item) => {
   }
 }
 
-// Add this new function to format date and time separately
 const formatDateTime = (dateTimeString) => {
   const date = new Date(dateTimeString)
   return [
