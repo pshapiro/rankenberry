@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
+import { useToast } from 'vue-toastification'
 
 const API_URL = 'http://localhost:5001/api'
 
@@ -17,6 +18,7 @@ export const useMainStore = defineStore('main', {
         this.projects = response.data
       } catch (error) {
         console.error('Error fetching projects:', error)
+        useToast().error('Failed to fetch projects. Please try again.')
         throw error
       }
     },
@@ -24,14 +26,12 @@ export const useMainStore = defineStore('main', {
       try {
         const response = await axios.post(`${API_URL}/projects`, { name, domain })
         this.projects.push(response.data)
+        useToast().success('Project added successfully!')
         return response.data
       } catch (error) {
         console.error('Error adding project:', error)
-        if (error.response && error.response.data) {
-          throw new Error(error.response.data.detail || 'An error occurred')
-        } else {
-          throw error
-        }
+        useToast().error('Failed to add project. Please try again.')
+        throw error
       }
     },
     async fetchKeywords(projectId) {
@@ -282,5 +282,25 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
+    async fetchGraphData(type, id) {
+      try {
+        const response = await axios.get(`${API_URL}/${type}-graph-data/${id}`)
+        return response.data
+      } catch (error) {
+        console.error(`Error fetching graph data for ${type}:`, error)
+        useToast().error(`Failed to fetch graph data for ${type}. Please try again.`)
+        throw error
+      }
+    },
+    async fetchShareOfVoiceData(type, id) {
+      try {
+        const response = await axios.get(`${API_URL}/${type}-share-of-voice/${id}`)
+        return response.data
+      } catch (error) {
+        console.error(`Error fetching share of voice data for ${type}:`, error)
+        useToast().error(`Failed to fetch share of voice data for ${type}. Please try again.`)
+        throw error
+      }
+    }
   }
 })
