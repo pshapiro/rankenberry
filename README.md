@@ -1,5 +1,7 @@
 # ![rankenberry-logo](https://github.com/user-attachments/assets/7222a62b-52e2-4474-afa7-653362a0dfa1) Rankenberry: SEO Rank Tracker
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
 "A simple rank tracking application leveraging a 3rd party API with advanced data features."
 
 ## Project Overview
