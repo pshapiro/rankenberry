@@ -17,8 +17,8 @@
 - [ ] Keyword click and rank forecasting
 - [ ] Automatic intent matching and clustering
 - [ ] System for scheduling like cron
-- [ ] Search Volume data added to keywords
-- [ ] Calendar based filtering
+- [x] Search Volume data added to keywords
+- [x] Calendar based filtering
 
 ## Medium Priority
 

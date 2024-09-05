@@ -39,6 +39,7 @@
                 <th>Date</th>
                 <th>Time</th>
                 <th>Rank</th>
+                <th>Search Volume</th>
                 <th>Change</th>
               </tr>
             </thead>
@@ -47,6 +48,7 @@
                 <td>{{ formatDate(entry.date) }}</td>
                 <td>{{ formatTime(entry.date) }}</td>
                 <td>{{ entry.rank === -1 ? 'Not Ranked' : entry.rank }}</td>
+                <td>{{ entry.search_volume === null ? '-' : entry.search_volume }}</td>
                 <td>
                   <span v-if="index < sortedHistory.length - 1" :class="getChangeClass(entry.rank, sortedHistory[index + 1].rank)">
                     {{ getChangeText(entry.rank, sortedHistory[index + 1].rank) }}
@@ -111,7 +113,7 @@ const filteredHistory = computed(() => {
 })
 
 const sortedHistory = computed(() => {
-  return [...filteredHistory.value].sort((a, b) => new Date(b.date) - new Date(a.date))
+  return [...props.history].sort((a, b) => new Date(b.date) - new Date(a.date))
 })
 
 const formatDate = (dateString) => {
@@ -145,7 +147,7 @@ const createChart = () => {
   const dailyBestRanks = filteredHistory.value.reduce((acc, entry) => {
     const date = new Date(entry.date + 'Z').toISOString().split('T')[0]
     if (!acc[date] || (entry.rank !== -1 && (acc[date].rank === -1 || entry.rank < acc[date].rank))) {
-      acc[date] = { date, rank: entry.rank }
+      acc[date] = { date, rank: entry.rank, search_volume: entry.search_volume }
     }
     return acc
   }, {})
@@ -163,7 +165,8 @@ const createChart = () => {
     const dateString = d.toISOString().split('T')[0]
     chartData.push({
       date: dateString,
-      rank: dailyBestRanks[dateString] ? dailyBestRanks[dateString].rank : null
+      rank: dailyBestRanks[dateString] ? dailyBestRanks[dateString].rank : null,
+      search_volume: dailyBestRanks[dateString] ? dailyBestRanks[dateString].search_volume : null
     })
   }
 
@@ -180,18 +183,19 @@ const createChart = () => {
     return
   }
 
-  const trace = {
+  const rankTrace = {
     x: chartDates,
     y: ranks,
     type: 'scatter',
     mode: 'lines+markers',
-    name: 'Best Rank',
+    name: 'Rank',
     line: { color: '#3273dc' },
+    yaxis: 'y1',
     connectgaps: false
   }
 
   const layout = {
-    title: `Best Daily Rank History for "${props.keyword}"`,
+    title: `Rank History for "${props.keyword}"`,
     xaxis: { 
       title: 'Date',
       type: 'date',
@@ -201,7 +205,7 @@ const createChart = () => {
     yaxis: { 
       title: 'Rank',
       autorange: 'reversed',
-      rangemode: 'tozero'
+      rangemode: 'tozero',
     },
     autosize: true,
     margin: { l: 50, r: 50, b: 50, t: 50, pad: 4 }
@@ -213,7 +217,7 @@ const createChart = () => {
   }
 
   nextTick(() => {
-    Plotly.newPlot(chart.value, [trace], layout, config)
+    Plotly.newPlot(chart.value, [rankTrace], layout, config)
   })
 }
 

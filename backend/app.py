@@ -8,10 +8,13 @@ from dotenv import load_dotenv
 import aiohttp
 from database import add_serp_data, get_keywords, get_all_keywords, delete_keyword_by_id, delete_keywords_by_project
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 import asyncio
 from asyncio import Semaphore
+import logging
+import aiohttp
+import json
 
 load_dotenv()
 
@@ -70,6 +73,8 @@ def init_db():
                   project_id INTEGER,
                   keyword TEXT NOT NULL,
                   active INTEGER DEFAULT 1,
+                  search_volume INTEGER DEFAULT NULL,
+                  last_volume_update TEXT,
                   FOREIGN KEY (project_id) REFERENCES projects (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS serp_data
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +82,7 @@ def init_db():
                   date TEXT NOT NULL,
                   rank INTEGER,
                   full_data TEXT NOT NULL,
+                  search_volume INTEGER,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS tags
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +101,10 @@ def init_db():
 init_db()
 
 SPACESERP_API_KEY = os.getenv("SPACESERP_API_KEY")
+GREPWORDS_API_KEY = os.getenv("GREPWORDS_API_KEY")
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
 @app.get("/api/projects")
 async def get_projects():
@@ -126,7 +136,7 @@ async def get_keywords(project_id: int):
 async def create_keyword(project_id: int, keyword: KeywordBase):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO keywords (project_id, keyword) VALUES (?, ?)',
+    cursor.execute('INSERT INTO keywords (project_id, keyword, search_volume, last_volume_update) VALUES (?, ?, NULL, NULL)',
                    (project_id, keyword.keyword))
     keyword_id = cursor.lastrowid
     conn.commit()
@@ -136,7 +146,7 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
 CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
+async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
     tag_id = request.tag_id if request else None
     keywords = await get_keywords(project_id, tag_id)
     active_keywords = [kw for kw in keywords if kw['active']]
@@ -146,7 +156,28 @@ async def fetch_and_store_serp_data(project_id: int, request: SerpDataRequest = 
     async def fetch_and_store(keyword):
         async with semaphore:
             serp_data = await fetch_serp_data(keyword['keyword'])
-            add_serp_data(keyword['id'], serp_data)
+            
+            # Check if we need to update the search volume
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
+            result = c.fetchone()
+            current_search_volume, last_update = result if result else (None, None)
+            conn.close()
+
+            current_time = datetime.now()
+            should_update_volume = (
+                current_search_volume is None or 
+                last_update is None or 
+                (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+            )
+
+            if should_update_volume:
+                search_volume = await fetch_search_volume(keyword['keyword'])
+            else:
+                search_volume = current_search_volume
+
+            add_serp_data(keyword['id'], serp_data, search_volume)
     
     tasks = [fetch_and_store(keyword) for keyword in active_keywords]
     await asyncio.gather(*tasks)
@@ -175,7 +206,7 @@ async def get_keywords(project_id: int, tag_id: Optional[int] = None):
         c.execute("SELECT * FROM keywords WHERE project_id = ?", (project_id,))
     keywords = c.fetchall()
     conn.close()
-    return [dict(zip(['id', 'project_id', 'keyword', 'active'], keyword)) for keyword in keywords]
+    return [dict(zip(['id', 'project_id', 'keyword', 'active', 'search_volume', 'last_volume_update'], keyword)) for keyword in keywords]
 
 async def get_keywords_by_tag(tag_id: int):
     conn = get_db_connection()
@@ -187,20 +218,22 @@ async def get_keywords_by_tag(tag_id: int):
     ''', (tag_id,))
     keywords = c.fetchall()
     conn.close()
-    return [dict(zip(['id', 'project_id', 'keyword', 'active'], keyword)) for keyword in keywords]
+    return [dict(zip(['id', 'project_id', 'keyword', 'active', 'search_volume', 'last_volume_update'], keyword)) for keyword in keywords]
 
 @app.get("/api/rankData")
 async def get_rank_data():
     conn = get_db_connection()
     rank_data = conn.execute('''
-        SELECT s.id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, p.id as project_id
+        SELECT s.id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, p.id as project_id, s.search_volume
         FROM serp_data s
         JOIN keywords k ON s.keyword_id = k.id
         JOIN projects p ON k.project_id = p.id
         ORDER BY s.date DESC
     ''').fetchall()
     conn.close()
-    return [dict(row) for row in rank_data]
+    result = [dict(zip(['id', 'date', 'keyword', 'domain', 'rank', 'keyword_id', 'project_id', 'search_volume'], row)) for row in rank_data]
+    logging.info(f"Rank data: {result}")
+    return result
 
 @app.get("/api/serp-data/{serp_data_id}")
 async def get_full_serp_data(serp_data_id: int):
@@ -224,11 +257,32 @@ async def get_full_serp_data(serp_data_id: int):
 @app.post("/api/fetch-serp-data-single/{keyword_id}")
 async def fetch_and_store_single_serp_data(keyword_id: int):
     conn = get_db_connection()
-    keyword = conn.execute('SELECT keyword FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
+    keyword = conn.execute('SELECT keyword, search_volume, last_volume_update FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
     conn.close()
+    
     if keyword:
+        current_time = datetime.now()
+        should_update_volume = (
+            keyword['search_volume'] is None or 
+            keyword['last_volume_update'] is None or 
+            (current_time - datetime.strptime(keyword['last_volume_update'], "%Y-%m-%d %H:%M:%S")).days > 30
+        )
+
         serp_data = await fetch_serp_data(keyword['keyword'])
-        add_serp_data(keyword_id, serp_data)
+        
+        if should_update_volume:
+            search_volume = await fetch_search_volume(keyword['keyword'])
+            # Update the keywords table with the new search volume
+            conn = get_db_connection()
+            conn.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
+                         (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+            conn.commit()
+            conn.close()
+        else:
+            search_volume = keyword['search_volume']
+
+        add_serp_data(keyword_id, serp_data, search_volume)
+        
         return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
     raise HTTPException(status_code=404, detail="Keyword not found")
 
@@ -251,14 +305,21 @@ async def fetch_serp_data(keyword):
         async with session.get(url, params=params) as response:
             return await response.json()
 
-def add_serp_data(keyword_id, serp_data):
+def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
     c = conn.cursor()
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
     rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
     full_data = json.dumps(serp_data)
-    conn.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data) VALUES (?, ?, ?, ?)',
-                 (keyword_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), rank, full_data))
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
+              (keyword_id, current_time, rank, full_data, search_volume))
+    
+    # Update the search_volume and last_volume_update in the keywords table
+    c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
+              (search_volume, current_time, keyword_id))
+    
     conn.commit()
     conn.close()
 
@@ -274,12 +335,16 @@ async def add_keywords(data: dict):
     added_keywords = []
     
     for keyword in keywords:
-        c.execute('INSERT INTO keywords (project_id, keyword, active) VALUES (?, ?, 1)', (project_id, keyword))
+        c.execute('INSERT INTO keywords (project_id, keyword, active, search_volume, last_volume_update) VALUES (?, ?, 1, NULL, NULL)', (project_id, keyword))
         keyword_id = c.lastrowid
-        added_keywords.append({"id": keyword_id, "project_id": project_id, "keyword": keyword, "active": True})
+        added_keywords.append({"id": keyword_id, "project_id": project_id, "keyword": keyword, "active": True, "search_volume": 0})
     
     conn.commit()
     conn.close()
+    
+    # Update search volumes asynchronously
+    for keyword in added_keywords:
+        await update_search_volume(keyword['id'], keyword['keyword'])
     
     return added_keywords
 
@@ -428,25 +493,81 @@ async def get_keyword_tags(keyword_id: int):
     conn.close()
     return [{"id": tag['id'], "name": tag['name']} for tag in tags]
 
+from typing import Optional
+
 class KeywordHistoryEntry(BaseModel):
     date: str
     rank: int
+    search_volume: Optional[int] = None
 
 @app.get("/api/keyword-history/{keyword_id}", response_model=List[KeywordHistoryEntry])
 async def get_keyword_history(keyword_id: int):
     conn = get_db_connection()
     history = conn.execute('''
-        SELECT date, rank
-        FROM serp_data
-        WHERE keyword_id = ?
-        ORDER BY date DESC
+        SELECT s.date, s.rank, s.search_volume
+        FROM serp_data s
+        WHERE s.keyword_id = ?
+        ORDER BY s.date DESC
     ''', (keyword_id,)).fetchall()
     conn.close()
     
     if not history:
         raise HTTPException(status_code=404, detail="No history found for this keyword")
     
-    return [{"date": entry['date'], "rank": entry['rank']} for entry in history]
+    return [KeywordHistoryEntry(date=entry['date'], rank=entry['rank'], search_volume=entry['search_volume']) for entry in history]
+
+async def fetch_search_volume(keyword):
+    url = "https://data.grepwords.com/v1/keywords/lookup"
+    headers = {
+        "accept": "application/json",
+        "api_key": GREPWORDS_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "term": keyword,
+        "country": "us",
+        "language": "en"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            logging.info(f"Grepwords API request for '{keyword}': URL: {url}, Headers: {headers}, Payload: {payload}")
+            data = await response.json()
+            logging.info(f"Grepwords API response for '{keyword}': {json.dumps(data, indent=2)}")
+            
+            if response.status == 200 and data and 'data' in data:
+                volume = data['data'].get('volume', 0)
+                logging.info(f"Search volume for '{keyword}': {volume}")
+                return volume
+            else:
+                logging.warning(f"No search volume data found for '{keyword}'. Status: {response.status}, Response: {data}")
+                return 0
+
+async def update_search_volume(keyword_id, keyword):
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    c = conn.cursor()
+    
+    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword_id,))
+    result = c.fetchone()
+    search_volume, last_update = result if result else (None, None)
+    
+    current_time = datetime.now()
+    should_update = (
+        search_volume is None or 
+        last_update is None or 
+        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+    )
+    
+    if should_update:
+        volume = await fetch_search_volume(keyword)
+        c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
+                  (volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+        conn.commit()
+        logging.info(f"Updated search volume for keyword '{keyword}' (ID: {keyword_id}): {volume}")
+    else:
+        logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
+    
+    conn.close()
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

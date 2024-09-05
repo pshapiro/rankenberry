@@ -105,6 +105,8 @@ export const useMainStore = defineStore('main', {
     async fetchSingleSerpData(keywordId) {
       try {
         const response = await axios.post(`${API_URL}/fetch-serp-data-single/${keywordId}`);
+        // After fetching, update the rankData state
+        await this.fetchRankData();
         return response.data;
       } catch (error) {
         console.error('Error fetching single SERP data:', error);

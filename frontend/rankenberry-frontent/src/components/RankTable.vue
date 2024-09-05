@@ -69,6 +69,9 @@
           <p><strong>Selected Project:</strong> {{ selectedProjectName }}</p>
           <p><strong>Selected Tag:</strong> {{ selectedTagName }}</p>
         </div>
+        <div class="column">
+          <p><strong>Total Search Volume:</strong> {{ totalSearchVolume }}</p>
+        </div>
       </div>
     </div>
 
@@ -79,6 +82,7 @@
           <th>Keyword</th>
           <th>Domain</th>
           <th>Rank</th>
+          <th>Search Volume</th>
           <th>Change</th>
           <th>Actions</th>
           <th>Tags</th>
@@ -90,6 +94,7 @@
           <td>{{ item.keyword }}</td>
           <td>{{ item.domain }}</td>
           <td>{{ item.rank === null || item.rank === -1 ? '-' : item.rank }}</td>
+          <td>{{ item.search_volume === null ? '-' : item.search_volume }}</td>
           <td>
             <span v-if="rankChanges[item.keyword_id] && rankChanges[item.keyword_id].length > 1">
               <span v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1" class="has-text-danger">
@@ -245,7 +250,7 @@ const latestRankData = computed(() => {
   const keywordMap = new Map()
   
   filteredRankData.value.forEach(item => {
-    if (!keywordMap.has(item.keyword_id)) {
+    if (!keywordMap.has(item.keyword_id) || new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)) {
       keywordMap.set(item.keyword_id, item)
     }
   })
@@ -319,6 +324,14 @@ const selectedTagName = computed(() => {
   return tag ? tag.name : 'Unknown Tag'
 })
 
+const totalSearchVolume = computed(() => {
+  const uniqueKeywords = new Set(latestRankData.value.map(item => item.keyword_id))
+  return Array.from(uniqueKeywords).reduce((sum, keywordId) => {
+    const keyword = latestRankData.value.find(item => item.keyword_id === keywordId)
+    return sum + (keyword && keyword.search_volume !== null ? keyword.search_volume : 0)
+  }, 0)
+})
+
 const previousPage = () => {
   if (currentPage.value > 1) {
     currentPage.value--
@@ -349,6 +362,7 @@ const fetchSerpData = async () => {
       await store.fetchSerpDataByTag(selectedTag.value)
     }
     await store.fetchRankData()
+    console.log("Fetched rank data:", store.rankData)  // Add this line
     await loadKeywordTags()
   } catch (error) {
     console.error('Error fetching SERP data:', error)

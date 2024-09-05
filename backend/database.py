@@ -30,6 +30,9 @@ def init_db():
                   full_data TEXT,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
+    c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
+    c.execute('''ALTER TABLE keywords ADD COLUMN last_volume_update TEXT''')
+
     conn.commit()
     conn.close()
 
@@ -62,20 +65,17 @@ def add_keyword(project_id, keyword):
     conn.close()
     return keyword_id
 
-def add_serp_data(keyword_id, serp_data):
-    conn = sqlite3.connect('seo_rank_tracker.db')
+def add_serp_data(keyword_id, serp_data, search_volume):
+    conn = get_db_connection()
     c = conn.cursor()
-    date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Find the rank of the project's domain
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
-    rank = next((result['position'] for result in serp_data['organic_results'] if project_domain in result['domain']), None)
+    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
+    full_data = json.dumps(serp_data)
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # Store only the organic_results
-    organic_results = serp_data.get('organic_results', [])
+    c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
+              (keyword_id, current_time, rank, full_data, search_volume))
     
-    c.execute("INSERT INTO serp_data (keyword_id, date, rank, full_data) VALUES (?, ?, ?, ?)",
-              (keyword_id, date_time, rank, json.dumps(organic_results)))
     conn.commit()
     conn.close()
 

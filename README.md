@@ -1,17 +1,22 @@
 # ![rankenberry-logo](https://github.com/user-attachments/assets/7222a62b-52e2-4474-afa7-653362a0dfa1) Rankenberry: SEO Rank Tracker
 
-A simple rank tracking application leveraging a 3rd party API with advanced data features.
+"A simple rank tracking application leveraging a 3rd party API with advanced data features."
+
+A comprehensive rank tracking application leveraging multiple 3rd party APIs with advanced data features and visualization.
 
 ## Project Overview
 
-This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes a 3rd party API to fetch SERP (Search Engine Results Page) data and provides advanced features for data analysis and visualization.
+This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes multiple 3rd party APIs to fetch SERP (Search Engine Results Page) data and search volume information, providing advanced features for data analysis and visualization.
 
 ### Key Features
 
 - Project-based keyword tracking
 - SERP data fetching and storage
 - Rank tracking over time
+- Search volume tracking with 30-day update intervals (via Grepwords)
 - Advanced data filtering and visualization
+- Keyword tagging system
+- Historical data viewing and exporting
 - User-friendly interface built with Vue.js
 
 ## Tech Stack
@@ -19,7 +24,9 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - Frontend: Vue.js 3 with Vite
 - Backend: Python with FastAPI
 - Database: SQLite
-- API Integration: 3rd party SERP API (spaceserp)
+- API Integrations: 
+  - SpaceSERP for SERP data
+  - Grepwords for search volume data
 
 ## Getting Started
 
@@ -51,9 +58,10 @@ This SEO Rank Tracker is a web application that allows users to track search eng
    npm install
    ```
 
-4. Create a `.env` file in the backend directory and add your API key:
+4. Create a `.env` file in the backend directory and add your API keys:
    ```
-   API_KEY=your_api_key_here
+   SPACESERP_API_KEY=your_spaceserp_api_key_here
+   GREPWORDS_API_KEY=your_grepwords_api_key_here
    ```
 
 ### Running the Application
@@ -78,6 +86,16 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 2. Add keywords to track for each project
 3. Fetch SERP data for your keywords
 4. View and analyze ranking data over time
+5. Use the tagging system to organize and filter keywords
+6. View historical data for individual keywords
+7. Export keyword history data as needed
+
+## New Features
+
+- Search volume tracking: The application now fetches and stores search volume data for keywords, updating every 30 days.
+- Keyword tagging: Users can now add tags to keywords for better organization and filtering.
+- Historical data viewing: A new modal allows users to view and export historical data for individual keywords.
+- Improved data visualization: The rank table now includes more detailed metrics and allows for advanced filtering.
 
 ## Contributing
 
@@ -86,6 +104,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Acknowledgments
 
 - Thanks to SpaceSERP for providing the SERP data API
+- Thanks to Grepwords for providing the search volume data API
 - Vue.js and FastAPI communities for their excellent documentation and tools
 
 ## TODO
