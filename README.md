@@ -28,15 +28,7 @@ This SEO Rank Tracker is a web application that allows users to track search eng
   - SpaceSERP for SERP data
   - Grepwords for search volume data
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v14 or later)
-- Python (v3.8 or later)
-- pip (Python package manager)
-
-### Installation
+## Installation
 
 1. Clone the repository:
    ```
@@ -58,11 +50,33 @@ This SEO Rank Tracker is a web application that allows users to track search eng
    npm install
    ```
 
-4. Create a `.env` file in the backend directory and add your API keys:
+4. Install additional JavaScript libraries:
+   ```
+   npm install axios pinia v-calendar plotly.js-dist-min
+   ```
+
+5. Create a `.env` file in the backend directory and add your API keys:
    ```
    SPACESERP_API_KEY=your_spaceserp_api_key_here
    GREPWORDS_API_KEY=your_grepwords_api_key_here
    ```
+
+### Additional JavaScript Libraries
+
+- **axios**: Promise-based HTTP client for making API requests.
+- **pinia**: State management library for Vue.js applications.
+- **v-calendar**: Calendar and date picker component for Vue.js.
+- **plotly.js-dist-min**: JavaScript graphing library for creating interactive charts.
+
+These libraries are essential for the functionality of the frontend application. They handle API communication, state management, date selection, and data visualization respectively.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js (v14 or later)
+- Python (v3.8 or later)
+- pip (Python package manager)
 
 ### Running the Application
 
