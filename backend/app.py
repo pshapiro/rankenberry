@@ -15,6 +15,8 @@ from asyncio import Semaphore
 import logging
 import aiohttp
 import json
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
@@ -568,6 +570,139 @@ async def update_search_volume(keyword_id, keyword):
         logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
     
     conn.close()
+
+@app.get("/api/rolling-average/{keyword_id}")
+async def get_rolling_average(keyword_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Get the last 7 days of data
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)
+
+    cursor.execute('''
+        SELECT date, rank
+        FROM serp_data
+        WHERE keyword_id = ? AND date BETWEEN ? AND ?
+        ORDER BY date
+    ''', (keyword_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
+
+    results = cursor.fetchall()
+    conn.close()
+
+    # Calculate 7-day rolling average
+    rolling_average = []
+    for i in range(len(results)):
+        start_idx = max(0, i - 6)
+        window = results[start_idx:i+1]
+        avg_rank = sum(r[1] for r in window if r[1] != -1) / len([r for r in window if r[1] != -1])
+        rolling_average.append({
+            'date': results[i][0],
+            'rolling_avg': round(avg_rank, 2)
+        })
+
+    return rolling_average
+
+scheduler = BackgroundScheduler()
+
+async def fetch_all_serp_data():
+    # Implement the logic to fetch SERP data for all active keywords
+    pass
+
+# Schedule the task to run daily at 1:00 AM
+scheduler.add_job(fetch_all_serp_data, CronTrigger(hour=1, minute=0))
+
+# Start the scheduler when the app starts
+@app.on_event("startup")
+async def start_scheduler():
+    scheduler.start()
+
+# Shut down the scheduler when the app stops
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    scheduler.shutdown()
+
+@app.get("/api/project-graph-data/{project_id}")
+async def get_project_graph_data(project_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT k.keyword, s.date, s.rank
+        FROM keywords k
+        JOIN serp_data s ON k.id = s.keyword_id
+        WHERE k.project_id = ?
+        ORDER BY k.keyword, s.date
+    ''', (project_id,))
+    results = cursor.fetchall()
+    conn.close()
+
+    graph_data = {}
+    for row in results:
+        keyword, date, rank = row
+        if keyword not in graph_data:
+            graph_data[keyword] = {'dates': [], 'ranks': []}
+        graph_data[keyword]['dates'].append(date)
+        graph_data[keyword]['ranks'].append(rank)
+
+    return [{'keyword': k, 'dates': v['dates'], 'ranks': v['ranks']} for k, v in graph_data.items()]
+
+@app.get("/api/tag-graph-data/{tag_id}")
+async def get_tag_graph_data(tag_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT k.keyword, s.date, s.rank
+        FROM keywords k
+        JOIN keyword_tags kt ON k.id = kt.keyword_id
+        JOIN serp_data s ON k.id = s.keyword_id
+        WHERE kt.tag_id = ?
+        ORDER BY k.keyword, s.date
+    ''', (tag_id,))
+    results = cursor.fetchall()
+    conn.close()
+
+    graph_data = {}
+    for row in results:
+        keyword, date, rank = row
+        if keyword not in graph_data:
+            graph_data[keyword] = {'dates': [], 'ranks': []}
+        graph_data[keyword]['dates'].append(date)
+        graph_data[keyword]['ranks'].append(rank)
+
+    return [{'keyword': k, 'dates': v['dates'], 'ranks': v['ranks']} for k, v in graph_data.items()]
+
+@app.get("/api/project-share-of-voice/{project_id}")
+async def get_project_share_of_voice(project_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT k.keyword, s.rank, k.search_volume
+        FROM keywords k
+        LEFT JOIN serp_data s ON k.id = s.keyword_id
+        WHERE k.project_id = ?
+        AND s.date = (SELECT MAX(date) FROM serp_data WHERE keyword_id = k.id)
+    ''', (project_id,))
+    results = cursor.fetchall()
+    conn.close()
+
+    return [{'keyword': row[0], 'rank': row[1], 'search_volume': row[2]} for row in results]
+
+@app.get("/api/tag-share-of-voice/{tag_id}")
+async def get_tag_share_of_voice(tag_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT k.keyword, s.rank, k.search_volume
+        FROM keywords k
+        JOIN keyword_tags kt ON k.id = kt.keyword_id
+        LEFT JOIN serp_data s ON k.id = s.keyword_id
+        WHERE kt.tag_id = ?
+        AND s.date = (SELECT MAX(date) FROM serp_data WHERE keyword_id = k.id)
+    ''', (tag_id,))
+    results = cursor.fetchall()
+    conn.close()
+
+    return [{'keyword': row[0], 'rank': row[1], 'search_volume': row[2]} for row in results]
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

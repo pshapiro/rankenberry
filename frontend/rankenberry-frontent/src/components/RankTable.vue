@@ -75,6 +75,23 @@
       </div>
     </div>
 
+    <div class="columns">
+      <div class="column">
+        <TagProjectGraph
+          :type="selectedProject ? 'project' : 'tag'"
+          :id="selectedProject || selectedTag"
+          :data="graphData"
+        />
+      </div>
+      <div class="column">
+        <ShareOfVoice
+          :type="selectedProject ? 'project' : 'tag'"
+          :id="selectedProject || selectedTag"
+          :data="latestRankData"
+        />
+      </div>
+    </div>
+
     <table class="table is-fullwidth is-striped is-hoverable">
       <thead>
         <tr>
@@ -187,6 +204,8 @@ import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
 import { DatePicker } from 'v-calendar'
 import 'v-calendar/dist/style.css'
+import TagProjectGraph from './TagProjectGraph.vue'
+import ShareOfVoice from './ShareOfVoice.vue'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
@@ -330,6 +349,14 @@ const totalSearchVolume = computed(() => {
     const keyword = latestRankData.value.find(item => item.keyword_id === keywordId)
     return sum + (keyword && keyword.search_volume !== null ? keyword.search_volume : 0)
   }, 0)
+})
+
+const graphData = computed(() => {
+  return latestRankData.value.map(item => ({
+    keyword: item.keyword,
+    dates: item.history.map(h => h.date),
+    ranks: item.history.map(h => h.rank)
+  }))
 })
 
 const previousPage = () => {
