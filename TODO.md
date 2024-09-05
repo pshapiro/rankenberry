@@ -23,6 +23,7 @@
 ## Medium Priority
 
 - [ ] Optimize API call speed. It seems pretty slow.
+- [ ] API key management for rankemberry external APIs
 
 ## Low Priority
 
