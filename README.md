@@ -2,11 +2,9 @@
 
 "A simple rank tracking application leveraging a 3rd party API with advanced data features."
 
-A comprehensive rank tracking application leveraging multiple 3rd party APIs with advanced data features and visualization.
-
 ## Project Overview
 
-This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes multiple 3rd party APIs to fetch SERP (Search Engine Results Page) data and search volume information, providing advanced features for data analysis and visualization.
+This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes multiple 3rd party APIs to fetch SERP data, such as [SpaceSERP](https://appsumo.8odi.net/nLaMra) (lifetime deal on AppSumo), and search volume information, providing advanced features for data analysis and visualization.
 
 ### Key Features
 
@@ -25,7 +23,7 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - Backend: Python with FastAPI
 - Database: SQLite
 - API Integrations: 
-  - SpaceSERP for SERP data
+  - [SpaceSERP](https://appsumo.8odi.net/nLaMra) for SERP data (lifetime deal on AppSumo)
   - Grepwords for search volume data
 
 ## Installation
@@ -117,10 +115,14 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Acknowledgments
 
-- Thanks to SpaceSERP for providing the SERP data API
+- Thanks to [SpaceSERP](https://appsumo.8odi.net/nLaMra) for providing the SERP data API
 - Thanks to Grepwords for providing the search volume data API
 - Vue.js and FastAPI communities for their excellent documentation and tools
 
 ## TODO
 
 For a list of planned features and improvements, please see our [TODO list](https://github.com/pshapiro/rankenberry/blob/main/TODO.md).
+
+---
+
+*Note: The SpaceSERP link is an affiliate link, which means I may receive commission if you sign up from those links.*
