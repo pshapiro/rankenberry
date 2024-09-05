@@ -19,6 +19,7 @@
 - [ ] System for scheduling like cron
 - [x] Search Volume data added to keywords
 - [x] Calendar based filtering
+- [ ] API key management for rankemberry external APIs
 
 ## Medium Priority
 
