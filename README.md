@@ -4,9 +4,11 @@
 
 "A simple rank tracking application leveraging a 3rd party API with advanced data features."
 
+__Note:__ Requires [SpaceSERP API](https://appsumo.8odi.net/nLaMra) (lifetime deal on AppSumo)
+
 ## Project Overview
 
-This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes multiple 3rd party APIs to fetch SERP data, such as [SpaceSERP](https://appsumo.8odi.net/nLaMra) (lifetime deal on AppSumo), and search volume information, providing advanced features for data analysis and visualization.
+This SEO Rank Tracker is a web application that allows users to track search engine rankings for specified keywords across different projects. It utilizes multiple 3rd party APIs to fetch ranking and SERP data, such as [SpaceSERP](https://appsumo.8odi.net/nLaMra) (lifetime deal on AppSumo), and search volume information, providing advanced features for data analysis and visualization.
 
 ### Key Features
 
