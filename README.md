@@ -13,7 +13,7 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - Project-based keyword tracking
 - SERP data fetching and storage
 - Rank tracking over time
-- Search volume tracking with 30-day update intervals (via Grepwords)
+- Search volume tracking with 30-day update intervals (via Grepwords or [DataForSEO](https://dataforseo.com/?aff=167680))
 - Advanced data filtering and visualization
 - Keyword tagging system
 - Historical data viewing and exporting
@@ -26,7 +26,7 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - Database: SQLite
 - API Integrations: 
   - [SpaceSERP](https://appsumo.8odi.net/nLaMra) for SERP data (lifetime deal on AppSumo)
-  - Grepwords for search volume data
+  - Grepwords or [DataForSEO](https://dataforseo.com/?aff=167680) for search volume data
 
 ## Installation
 
@@ -59,6 +59,8 @@ This SEO Rank Tracker is a web application that allows users to track search eng
    ```
    SPACESERP_API_KEY=your_spaceserp_api_key_here
    GREPWORDS_API_KEY=your_grepwords_api_key_here
+   DATAFORSEO_LOGIN=your_login_here
+DATAFORSEO_PASSWORD=your_password_here
    ```
 
 ### Additional JavaScript Libraries

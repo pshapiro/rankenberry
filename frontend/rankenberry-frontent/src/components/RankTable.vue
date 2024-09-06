@@ -176,6 +176,9 @@
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-spinner"></div>
     </div>
+
+    <!-- Remove this line -->
+    <!-- <ApiSourceSelector /> -->
   </div>
 </template>
 
@@ -185,6 +188,8 @@ import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
+// Remove this import
+// import ApiSourceSelector from './ApiSourceSelector.vue'
 import { DatePicker } from 'v-calendar'
 import 'v-calendar/dist/style.css'
 
@@ -396,7 +401,9 @@ const fetchSingleSerpData = async (item) => {
   if (item && item.keyword_id) {
     isLoading.value = true
     try {
-      await store.fetchSingleSerpData(item.keyword_id)
+      const apiSource = await store.getSearchVolumeApiSource()
+      console.log(`Fetching SERP data for keyword ID ${item.keyword_id} using ${apiSource}`);
+      await store.fetchSingleSerpData(item.keyword_id, apiSource)
       await store.fetchRankData()
     } catch (error) {
       console.error('Error fetching single SERP data:', error)

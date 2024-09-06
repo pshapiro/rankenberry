@@ -112,7 +112,10 @@ const addKeywords = async () => {
     keywords.value = ''
     
     // Fetch SERP data for newly added keywords
-    await store.fetchSerpDataForKeywords(addedKeywords)
+    const apiSource = await store.getSearchVolumeApiSource()
+    for (const keyword of addedKeywords) {
+      await store.fetchSingleSerpData(keyword.id, apiSource)
+    }
     message.value += ' SERP data fetched for new keywords.'
   } catch (error) {
     message.value = `Error adding keywords: ${error.message}`

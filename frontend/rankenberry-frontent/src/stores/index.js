@@ -102,14 +102,21 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
-    async fetchSingleSerpData(keywordId) {
+    async fetchSingleSerpData(keywordId, apiSource) {
       try {
-        const response = await axios.post(`${API_URL}/fetch-serp-data-single/${keywordId}`);
+        console.log(`Fetching SERP data for keyword ID ${keywordId} using ${apiSource}`);
+        const response = await axios.post(`${API_URL}/fetch-serp-data-single/${keywordId}`, { api_source: apiSource });
+        console.log("Response:", response.data);
         // After fetching, update the rankData state
         await this.fetchRankData();
         return response.data;
       } catch (error) {
         console.error('Error fetching single SERP data:', error);
+        if (error.response) {
+          console.error('Response data:', error.response.data);
+          console.error('Response status:', error.response.status);
+          console.error('Response headers:', error.response.headers);
+        }
         throw error;
       }
     },
@@ -280,6 +287,32 @@ export const useMainStore = defineStore('main', {
       } catch (error) {
         console.error('Error fetching keyword history:', error)
         throw error
+      }
+    },
+    async getSearchVolumeApiSource() {
+      try {
+        const response = await axios.get(`${API_URL}/search-volume-api-source`);
+        console.log("Current API source:", response.data.api_source);
+        return response.data.api_source;
+      } catch (error) {
+        console.error('Error fetching search volume API source:', error);
+        throw error;
+      }
+    },
+    async updateSearchVolumeApiSource(apiSource) {
+      try {
+        console.log("Sending data:", { api_source: apiSource });
+        const response = await axios.post(`${API_URL}/search-volume-api-source`, { api_source: apiSource });
+        console.log("Response:", response.data);
+        return response.data;
+      } catch (error) {
+        console.error('Error updating search volume API source:', error);
+        if (error.response) {
+          console.error('Response data:', error.response.data);
+          console.error('Response status:', error.response.status);
+          console.error('Response headers:', error.response.headers);
+        }
+        throw error;
       }
     },
   }

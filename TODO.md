@@ -32,7 +32,7 @@
 - [ ] Add export functionality for reports
 - [ ] UI for API key
 - [ ] User authentication
-- [ ] Support for other search volume APIs
+- [x] Support for other search volume APIs
 - [ ] Toggle to turn on/off search volume data
 
 ## Completed

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import RankTable from '../components/RankTable.vue'
 import AddKeywordDomain from '../components/AddKeywordDomain.vue'
 import KeywordManagement from '../components/KeywordManagement.vue'
+import ConfigureOptions from '../components/ConfigureOptions.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -23,6 +24,12 @@ const router = createRouter({
       name: 'Keyword Management',
       component: KeywordManagement,
       meta: { title: 'Keyword Management' }
+    },
+    {
+      path: '/configure',
+      name: 'Configure Options',
+      component: ConfigureOptions,
+      meta: { title: 'Configure Options' }
     }
   ]
 })

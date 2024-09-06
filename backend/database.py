@@ -28,10 +28,30 @@ def init_db():
                   date TEXT NOT NULL,
                   rank INTEGER,
                   full_data TEXT,
+                  api_source TEXT DEFAULT 'grepwords',
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
     c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
     c.execute('''ALTER TABLE keywords ADD COLUMN last_volume_update TEXT''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS settings
+                 (key TEXT PRIMARY KEY,
+                  value TEXT)''')
+
+    # Insert default value for search_volume_api_source if it doesn't exist
+    c.execute('''INSERT OR IGNORE INTO settings (key, value) 
+                 VALUES ('search_volume_api_source', 'grepwords')''')
+
+    # Add api_source column to serp_data table if it doesn't exist
+    c.execute('''
+        PRAGMA table_info(serp_data)
+    ''')
+    columns = [column[1] for column in c.fetchall()]
+    if 'api_source' not in columns:
+        c.execute('''
+            ALTER TABLE serp_data
+            ADD COLUMN api_source TEXT DEFAULT 'grepwords'
+        ''')
 
     conn.commit()
     conn.close()

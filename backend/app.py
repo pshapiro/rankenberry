@@ -15,6 +15,7 @@ from asyncio import Semaphore
 import logging
 import aiohttp
 import json
+import base64
 
 load_dotenv()
 
@@ -52,7 +53,10 @@ class TagCreate(BaseModel):
     name: str
 
 class SerpDataRequest(BaseModel):
-    tag_id: Optional[int] = None
+    api_source: str
+
+class ApiSourceUpdate(BaseModel):
+    api_source: str
 
 # Database functions
 def get_db_connection():
@@ -83,6 +87,7 @@ def init_db():
                   rank INTEGER,
                   full_data TEXT NOT NULL,
                   search_volume INTEGER,
+                  api_source TEXT DEFAULT 'grepwords',
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS tags
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +99,21 @@ def init_db():
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id),
                   FOREIGN KEY (tag_id) REFERENCES tags (id),
                   UNIQUE(keyword_id, tag_id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS settings
+                 (key TEXT PRIMARY KEY,
+                  value TEXT)''')
+
+    # Add api_source column to serp_data table if it doesn't exist
+    c.execute('''
+        PRAGMA table_info(serp_data)
+    ''')
+    columns = [column[1] for column in c.fetchall()]
+    if 'api_source' not in columns:
+        c.execute('''
+            ALTER TABLE serp_data
+            ADD COLUMN api_source TEXT DEFAULT 'grepwords'
+        ''')
+
     conn.commit()
     conn.close()
 
@@ -102,6 +122,8 @@ init_db()
 
 SPACESERP_API_KEY = os.getenv("SPACESERP_API_KEY")
 GREPWORDS_API_KEY = os.getenv("GREPWORDS_API_KEY")
+DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN")
+DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -255,7 +277,9 @@ async def get_full_serp_data(serp_data_id: int):
     raise HTTPException(status_code=404, detail="SERP data not found")
 
 @app.post("/api/fetch-serp-data-single/{keyword_id}")
-async def fetch_and_store_single_serp_data(keyword_id: int):
+async def fetch_and_store_single_serp_data(keyword_id: int, request: SerpDataRequest):
+    api_source = request.api_source
+    logging.info(f"Fetching SERP data for keyword ID {keyword_id} using {api_source}")
     conn = get_db_connection()
     keyword = conn.execute('SELECT keyword, search_volume, last_volume_update FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
     conn.close()
@@ -267,11 +291,13 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
             keyword['last_volume_update'] is None or 
             (current_time - datetime.strptime(keyword['last_volume_update'], "%Y-%m-%d %H:%M:%S")).days > 30
         )
+        logging.info(f"Should update volume for '{keyword['keyword']}': {should_update_volume}")
 
         serp_data = await fetch_serp_data(keyword['keyword'])
         
-        if should_update_volume:
-            search_volume = await fetch_search_volume(keyword['keyword'])
+        if should_update_volume and api_source != "disabled":
+            search_volume = await fetch_search_volume(keyword['keyword'], api_source)
+            logging.info(f"Fetched search volume for '{keyword['keyword']}': {search_volume}")
             # Update the keywords table with the new search volume
             conn = get_db_connection()
             conn.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
@@ -280,8 +306,9 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
             conn.close()
         else:
             search_volume = keyword['search_volume']
+            logging.info(f"Using existing search volume for '{keyword['keyword']}': {search_volume}")
 
-        add_serp_data(keyword_id, serp_data, search_volume)
+        add_serp_data(keyword_id, serp_data, search_volume, api_source)
         
         return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
     raise HTTPException(status_code=404, detail="Keyword not found")
@@ -292,7 +319,6 @@ async def fetch_serp_data(keyword):
     params = {
         "apiKey": SPACESERP_API_KEY,
         "q": keyword,
-        "location": "Midtown Manhattan,New York,United States",
         "domain": "google.com",
         "gl": "us",
         "hl": "en",
@@ -305,7 +331,7 @@ async def fetch_serp_data(keyword):
         async with session.get(url, params=params) as response:
             return await response.json()
 
-def add_serp_data(keyword_id, serp_data, search_volume):
+def add_serp_data(keyword_id, serp_data, search_volume, api_source):
     conn = get_db_connection()
     c = conn.cursor()
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
@@ -313,12 +339,8 @@ def add_serp_data(keyword_id, serp_data, search_volume):
     full_data = json.dumps(serp_data)
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
-              (keyword_id, current_time, rank, full_data, search_volume))
-    
-    # Update the search_volume and last_volume_update in the keywords table
-    c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
-              (search_volume, current_time, keyword_id))
+    c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume, api_source) VALUES (?, ?, ?, ?, ?, ?)',
+              (keyword_id, current_time, rank, full_data, search_volume, api_source))
     
     conn.commit()
     conn.close()
@@ -516,7 +538,7 @@ async def get_keyword_history(keyword_id: int):
     
     return [KeywordHistoryEntry(date=entry['date'], rank=entry['rank'], search_volume=entry['search_volume']) for entry in history]
 
-async def fetch_search_volume(keyword):
+async def fetch_search_volume_grepwords(keyword):
     url = "https://data.grepwords.com/v1/keywords/lookup"
     headers = {
         "accept": "application/json",
@@ -543,6 +565,45 @@ async def fetch_search_volume(keyword):
                 logging.warning(f"No search volume data found for '{keyword}'. Status: {response.status}, Response: {data}")
                 return 0
 
+async def fetch_search_volume_dataforseo(keyword):
+    url = "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live"
+    headers = {
+        "Authorization": f"Basic {base64.b64encode(f'{DATAFORSEO_LOGIN}:{DATAFORSEO_PASSWORD}'.encode()).decode()}",
+        "Content-Type": "application/json"
+    }
+    payload = json.dumps([{
+        "keywords": [keyword],
+        "language_code": "en",
+        "sort_by": "relevance",
+        "include_adult_keywords": True
+    }])
+    
+    logging.info(f"DataForSEO API request for '{keyword}': URL: {url}, Headers: {headers}, Payload: {payload}")
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=payload) as response:
+            data = await response.json()
+            logging.info(f"DataForSEO API response for '{keyword}': {json.dumps(data, indent=2)}")
+            
+            if response.status == 200 and data.get("tasks"):
+                result = data["tasks"][0]["result"][0]
+                volume = result.get("search_volume", 0)
+                logging.info(f"Search volume for '{keyword}': {volume}")
+                return volume
+            else:
+                logging.warning(f"No search volume data found for '{keyword}'. Status: {response.status}, Response: {data}")
+                return 0
+
+async def fetch_search_volume(keyword, api_source):
+    logging.info(f"Fetching search volume for '{keyword}' using {api_source}")
+    if api_source == "grepwords":
+        return await fetch_search_volume_grepwords(keyword)
+    elif api_source == "dataforseo":
+        return await fetch_search_volume_dataforseo(keyword)
+    else:
+        logging.warning(f"API source '{api_source}' not recognized or disabled. Returning 0.")
+        return 0
+
 async def update_search_volume(keyword_id, keyword):
     conn = sqlite3.connect('seo_rank_tracker.db')
     c = conn.cursor()
@@ -568,6 +629,34 @@ async def update_search_volume(keyword_id, keyword):
         logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
     
     conn.close()
+
+@app.get("/api/search-volume-api-source")
+async def get_search_volume_api_source():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key = 'search_volume_api_source'")
+    result = c.fetchone()
+    conn.close()
+    api_source = result[0] if result else "grepwords"
+    logging.info(f"Current API source: {api_source}")
+    return {"api_source": api_source}
+
+@app.post("/api/search-volume-api-source")
+async def update_search_volume_api_source(data: ApiSourceUpdate):
+    logging.info(f"Received data: {data}")
+    try:
+        if data.api_source not in ["grepwords", "dataforseo", "disabled"]:
+            raise HTTPException(status_code=400, detail="Invalid API source")
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("search_volume_api_source", data.api_source))
+        conn.commit()
+        conn.close()
+        return {"message": "API source updated successfully"}
+    except Exception as e:
+        logging.error(f"Error updating API source: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
