@@ -62,7 +62,7 @@ This SEO Rank Tracker is a web application that allows users to track search eng
    SPACESERP_API_KEY=your_spaceserp_api_key_here
    GREPWORDS_API_KEY=your_grepwords_api_key_here
    DATAFORSEO_LOGIN=your_login_here
-DATAFORSEO_PASSWORD=your_password_here
+   DATAFORSEO_PASSWORD=your_password_here
    ```
 
 ### Additional JavaScript Libraries
