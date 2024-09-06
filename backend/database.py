@@ -28,7 +28,8 @@ def init_db():
                   date TEXT NOT NULL,
                   rank INTEGER,
                   full_data TEXT,
-                  api_source TEXT DEFAULT 'grepwords',
+                  search_volume INTEGER,
+                  api_source TEXT DEFAULT 'spaceserp',
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
     c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
@@ -52,6 +53,17 @@ def init_db():
             ALTER TABLE serp_data
             ADD COLUMN api_source TEXT DEFAULT 'grepwords'
         ''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS schedules
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  project_id INTEGER,
+                  tag_id INTEGER,
+                  frequency TEXT NOT NULL,
+                  last_run TEXT,
+                  next_run TEXT,
+                  FOREIGN KEY (project_id) REFERENCES projects (id),
+                  FOREIGN KEY (tag_id) REFERENCES tags (id))''')
 
     conn.commit()
     conn.close()

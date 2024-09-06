@@ -16,10 +16,22 @@ import logging
 import aiohttp
 import json
 import base64
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from sqlalchemy import create_engine
 
 load_dotenv()
 
 app = FastAPI()
+
+# Set up APScheduler
+engine = create_engine('sqlite:///./rankenberry.db')
+jobstores = {
+    'default': SQLAlchemyJobStore(engine=engine)
+}
+scheduler = AsyncIOScheduler(jobstores=jobstores)
 
 # CORS configuration
 app.add_middleware(
@@ -58,6 +70,12 @@ class SerpDataRequest(BaseModel):
 class ApiSourceUpdate(BaseModel):
     api_source: str
 
+class Schedule(BaseModel):
+    name: str
+    project_id: Optional[int] = None
+    tag_id: Optional[int] = None
+    frequency: str
+
 # Database functions
 def get_db_connection():
     conn = sqlite3.connect('seo_rank_tracker.db')
@@ -87,7 +105,7 @@ def init_db():
                   rank INTEGER,
                   full_data TEXT NOT NULL,
                   search_volume INTEGER,
-                  api_source TEXT DEFAULT 'grepwords',
+                  api_source TEXT DEFAULT 'spaceserp',
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS tags
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +120,16 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY,
                   value TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS schedules
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  project_id INTEGER,
+                  tag_id INTEGER,
+                  frequency TEXT NOT NULL,
+                  last_run TEXT,
+                  next_run TEXT,
+                  FOREIGN KEY (project_id) REFERENCES projects (id),
+                  FOREIGN KEY (tag_id) REFERENCES tags (id))''')
 
     # Add api_source column to serp_data table if it doesn't exist
     c.execute('''
@@ -111,7 +139,7 @@ def init_db():
     if 'api_source' not in columns:
         c.execute('''
             ALTER TABLE serp_data
-            ADD COLUMN api_source TEXT DEFAULT 'grepwords'
+            ADD COLUMN api_source TEXT DEFAULT 'spaceserp'
         ''')
 
     conn.commit()
@@ -313,8 +341,52 @@ async def fetch_and_store_single_serp_data(keyword_id: int, request: SerpDataReq
         return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
     raise HTTPException(status_code=404, detail="Keyword not found")
 
-async def fetch_serp_data(keyword):
-    await asyncio.sleep(0.1)  # Add a small delay to avoid overwhelming the API
+import logging
+import aiohttp
+import asyncio
+
+async def fetch_serp_data(project_id):
+    logging.info(f"Fetching SERP data for project {project_id}")
+    keywords = await get_keywords(project_id)
+    active_keywords = [kw for kw in keywords if kw['active']]
+    
+    for keyword in active_keywords:
+        try:
+            serp_data = await fetch_serp_data_for_keyword(keyword['keyword'])
+            logging.info(f"Fetched SERP data for keyword: {keyword['keyword']}")
+            
+            # Check if we need to update the search volume
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
+            result = c.fetchone()
+            current_search_volume, last_update = result if result else (None, None)
+            conn.close()
+
+            current_time = datetime.now()
+            should_update_volume = (
+                current_search_volume is None or 
+                last_update is None or 
+                (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+            )
+
+            if should_update_volume:
+                search_volume = await fetch_search_volume(keyword['keyword'])
+                logging.info(f"Updated search volume for keyword: {keyword['keyword']}")
+            else:
+                search_volume = current_search_volume
+
+            add_serp_data(keyword['id'], serp_data, search_volume, api_source='spaceserp')
+            logging.info(f"Added SERP data for keyword: {keyword['keyword']}")
+            
+            # Add a small delay to avoid overwhelming the API
+            await asyncio.sleep(1)
+        except Exception as e:
+            logging.error(f"Error fetching SERP data for keyword {keyword['keyword']}: {str(e)}")
+
+    logging.info(f"Completed fetching SERP data for project {project_id}")
+
+async def fetch_serp_data_for_keyword(keyword):
     url = "https://api.spaceserp.com/google/search"
     params = {
         "apiKey": SPACESERP_API_KEY,
@@ -329,9 +401,17 @@ async def fetch_serp_data(keyword):
     }
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as response:
-            return await response.json()
+            if response.status == 200:
+                return await response.json()
+            else:
+                logging.error(f"Error fetching SERP data for {keyword}. Status: {response.status}")
+                return None
 
-def add_serp_data(keyword_id, serp_data, search_volume, api_source):
+def add_serp_data(keyword_id, serp_data, search_volume, api_source='spaceserp'):
+    if not serp_data:
+        logging.error(f"No SERP data to add for keyword_id: {keyword_id}")
+        return
+
     conn = get_db_connection()
     c = conn.cursor()
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
@@ -344,6 +424,7 @@ def add_serp_data(keyword_id, serp_data, search_volume, api_source):
     
     conn.commit()
     conn.close()
+    logging.info(f"Added SERP data for keyword_id: {keyword_id}, rank: {rank}, time: {current_time}, api_source: {api_source}")
 
 @app.post("/api/keywords")
 async def add_keywords(data: dict):
@@ -657,6 +738,141 @@ async def update_search_volume_api_source(data: ApiSourceUpdate):
     except Exception as e:
         logging.error(f"Error updating API source: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+def calculate_next_run(frequency):
+    now = datetime.now()
+    if frequency == 'hourly':
+        return (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    elif frequency == 'daily':
+        return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    elif frequency == 'weekly':
+        return (now + timedelta(weeks=1) - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    elif frequency == 'monthly':
+        next_month = now.replace(day=1) + timedelta(days=32)
+        return next_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        raise ValueError("Invalid frequency")
+
+@app.post("/api/schedules")
+async def create_schedule(schedule: Schedule):
+    next_run = calculate_next_run(schedule.frequency)
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''INSERT INTO schedules (name, project_id, tag_id, frequency, next_run)
+                 VALUES (?, ?, ?, ?, ?)''',
+              (schedule.name, schedule.project_id, schedule.tag_id, schedule.frequency, next_run))
+    schedule_id = c.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Add job to APScheduler
+    cron_expression = frequency_to_cron(schedule.frequency)
+    scheduler.add_job(
+        run_schedule,
+        CronTrigger.from_crontab(cron_expression),
+        args=[schedule_id],
+        id=f"schedule_{schedule_id}",
+        replace_existing=True
+    )
+
+    return {"id": schedule_id, **schedule.dict(), "next_run": next_run}
+
+@app.get("/api/schedules")
+async def get_schedules():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM schedules")
+    schedules = c.fetchall()
+    conn.close()
+    return [dict(zip(['id', 'name', 'project_id', 'tag_id', 'frequency', 'last_run', 'next_run'], schedule)) for schedule in schedules]
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
+    conn.commit()
+    conn.close()
+
+    # Remove job from APScheduler
+    scheduler.remove_job(f"schedule_{schedule_id}")
+
+    return {"message": f"Schedule {schedule_id} deleted"}
+
+@app.post("/api/schedules/{schedule_id}/run")
+async def trigger_schedule(schedule_id: int):
+    await run_schedule(schedule_id)
+    return {"message": f"Schedule {schedule_id} executed successfully"}
+
+@app.post("/api/schedules/{schedule_id}/run-in-1-minute")
+async def schedule_run_in_1_minute(schedule_id: int):
+    run_time = datetime.now() + timedelta(minutes=1)
+    scheduler.add_job(
+        run_schedule,
+        trigger=DateTrigger(run_date=run_time),
+        args=[schedule_id],
+        id=f"onetime_schedule_{schedule_id}_{run_time.timestamp()}",
+        replace_existing=False
+    )
+    return {"message": f"Schedule {schedule_id} set to run at {run_time}"}
+
+async def run_schedule(schedule_id: int):
+    logging.info(f"Running schedule {schedule_id}")
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+    schedule = c.fetchone()
+    
+    if not schedule:
+        logging.error(f"Schedule {schedule_id} not found")
+        conn.close()
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    schedule_dict = dict(zip(['id', 'name', 'project_id', 'tag_id', 'frequency', 'last_run', 'next_run'], schedule))
+    
+    logging.info(f"Schedule details: {schedule_dict}")
+
+    try:
+        if schedule_dict['project_id']:
+            logging.info(f"Fetching SERP data for project {schedule_dict['project_id']}")
+            await asyncio.create_task(fetch_serp_data(schedule_dict['project_id']))
+        elif schedule_dict['tag_id']:
+            logging.info(f"Fetching SERP data for tag {schedule_dict['tag_id']}")
+            await asyncio.create_task(fetch_serp_data_by_tag(schedule_dict['tag_id']))
+        else:
+            logging.error("Neither project_id nor tag_id found in schedule")
+    except Exception as e:
+        logging.error(f"Error fetching SERP data: {str(e)}")
+        raise
+
+    now = datetime.now()
+    next_run = calculate_next_run(schedule_dict['frequency'])
+    logging.info(f"Updating schedule: last_run={now.isoformat()}, next_run={next_run.isoformat()}")
+    c.execute("UPDATE schedules SET last_run = ?, next_run = ? WHERE id = ?", 
+              (now.isoformat(), next_run.isoformat(), schedule_id))
+    conn.commit()
+    conn.close()
+    logging.info(f"Schedule {schedule_id} execution completed")
+
+def frequency_to_cron(frequency):
+    if frequency == 'hourly':
+        return '0 * * * *'
+    elif frequency == 'daily':
+        return '0 0 * * *'
+    elif frequency == 'weekly':
+        return '0 0 * * 0'
+    elif frequency == 'monthly':
+        return '0 0 1 * *'
+    else:
+        raise ValueError("Invalid frequency")
+
+@app.on_event("startup")
+async def start_scheduler():
+    scheduler.start()
+
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    scheduler.shutdown()
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

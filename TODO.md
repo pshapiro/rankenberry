@@ -16,10 +16,10 @@
 - [ ] Funnel type labeling and estimation
 - [ ] Keyword click and rank forecasting
 - [ ] Automatic intent matching and clustering
-- [ ] System for scheduling like cron
+- [x] System for scheduling like cron
 - [x] Search Volume data added to keywords
 - [x] Calendar based filtering
-- [ ] API key management for rankemberry external APIs
+- [ ] API key management for rankenberry external APIs
 
 ## Medium Priority
 
@@ -33,7 +33,7 @@
 - [ ] UI for API key
 - [ ] User authentication
 - [x] Support for other search volume APIs
-- [ ] Toggle to turn on/off search volume data
+- [x] Toggle to turn on/off search volume data
 
 ## Completed
 

@@ -9,6 +9,7 @@ export const useMainStore = defineStore('main', {
     keywords: [],
     rankData: [],
     tags: [],
+    schedules: [],
   }),
   actions: {
     async fetchProjects() {
@@ -315,5 +316,51 @@ export const useMainStore = defineStore('main', {
         throw error;
       }
     },
+    async fetchSchedules() {
+      try {
+        const response = await axios.get(`${API_URL}/schedules`)
+        this.schedules = response.data
+      } catch (error) {
+        console.error('Error fetching schedules:', error)
+        throw error
+      }
+    },
+    async createSchedule(schedule) {
+      try {
+        const response = await axios.post(`${API_URL}/schedules`, schedule)
+        this.schedules.push(response.data)
+        return response.data
+      } catch (error) {
+        console.error('Error creating schedule:', error)
+        throw error
+      }
+    },
+    async deleteSchedule(id) {
+      try {
+        await axios.delete(`${API_URL}/schedules/${id}`)
+        this.schedules = this.schedules.filter(s => s.id !== id)
+      } catch (error) {
+        console.error('Error deleting schedule:', error)
+        throw error
+      }
+    },
+    async runSchedule(id) {
+      try {
+        await axios.post(`${API_URL}/schedules/${id}/run`)
+        // After running the schedule, fetch the updated schedules
+        await this.fetchSchedules()
+      } catch (error) {
+        console.error('Error running schedule:', error)
+        throw error
+      }
+    },
+    async runScheduleIn1Minute(id) {
+      try {
+        await axios.post(`${API_URL}/schedules/${id}/run-in-1-minute`)
+      } catch (error) {
+        console.error('Error scheduling run in 1 minute:', error)
+        throw error
+      }
+    }
   }
 })
