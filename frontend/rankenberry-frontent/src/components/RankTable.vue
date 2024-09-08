@@ -362,15 +362,21 @@ const fetchSerpData = async () => {
   isLoading.value = true
   try {
     if (selectedProject.value) {
+      console.log(`Fetching SERP data for project: ${selectedProject.value}`)
       await store.fetchSerpData(selectedProject.value, selectedTag.value)
     } else if (selectedTag.value) {
+      console.log(`Fetching SERP data for tag: ${selectedTag.value}`)
       await store.fetchSerpDataByTag(selectedTag.value)
     }
     await store.fetchRankData()
-    console.log("Fetched rank data:", store.rankData)  // Add this line
+    console.log("Fetched rank data:", store.rankData)
     await loadKeywordTags()
   } catch (error) {
     console.error('Error fetching SERP data:', error)
+    if (error.response) {
+      console.error('Response data:', error.response.data)
+      console.error('Response status:', error.response.status)
+    }
   } finally {
     isLoading.value = false
   }

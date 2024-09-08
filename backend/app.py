@@ -65,7 +65,7 @@ class TagCreate(BaseModel):
     name: str
 
 class SerpDataRequest(BaseModel):
-    api_source: str
+    tag_id: Optional[int] = None
 
 class ApiSourceUpdate(BaseModel):
     api_source: str
@@ -196,43 +196,51 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
 CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
-    tag_id = request.tag_id if request else None
-    keywords = await get_keywords(project_id, tag_id)
-    active_keywords = [kw for kw in keywords if kw['active']]
-    
-    semaphore = Semaphore(CONCURRENT_REQUESTS)
-    
-    async def fetch_and_store(keyword):
-        async with semaphore:
-            serp_data = await fetch_serp_data(keyword['keyword'])
-            
-            # Check if we need to update the search volume
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
-            result = c.fetchone()
-            current_search_volume, last_update = result if result else (None, None)
-            conn.close()
+async def fetch_serp_data(project_id: int, request: dict = Body(...)):
+    try:
+        logging.info(f"Received request for project_id: {project_id}, request: {request}")
+        tag_id = request.get('tag_id')
+        keywords = await get_keywords(project_id, tag_id)
+        active_keywords = [kw for kw in keywords if kw['active']]
+        
+        semaphore = Semaphore(CONCURRENT_REQUESTS)
+        
+        async def fetch_and_store(keyword):
+            async with semaphore:
+                try:
+                    serp_data = await fetch_serp_data_for_keyword(keyword['keyword'])
+                    
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
+                    result = c.fetchone()
+                    current_search_volume, last_update = result if result else (None, None)
+                    conn.close()
 
-            current_time = datetime.now()
-            should_update_volume = (
-                current_search_volume is None or 
-                last_update is None or 
-                (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
-            )
+                    current_time = datetime.now()
+                    should_update_volume = (
+                        current_search_volume is None or 
+                        last_update is None or 
+                        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+                    )
 
-            if should_update_volume:
-                search_volume = await fetch_search_volume(keyword['keyword'])
-            else:
-                search_volume = current_search_volume
+                    if should_update_volume:
+                        search_volume = await fetch_search_volume(keyword['keyword'])
+                    else:
+                        search_volume = current_search_volume
 
-            add_serp_data(keyword['id'], serp_data, search_volume)
-    
-    tasks = [fetch_and_store(keyword) for keyword in active_keywords]
-    await asyncio.gather(*tasks)
-    
-    return {"message": f"SERP data fetched and stored successfully for {len(active_keywords)} active keywords"}
+                    add_serp_data(keyword['id'], serp_data, search_volume)
+                    logging.info(f"SERP data fetched and stored for keyword: {keyword['keyword']}")
+                except Exception as e:
+                    logging.error(f"Error processing keyword {keyword['keyword']}: {str(e)}")
+        
+        tasks = [fetch_and_store(keyword) for keyword in active_keywords]
+        await asyncio.gather(*tasks)
+        
+        return {"message": f"SERP data fetched and stored successfully for {len(active_keywords)} active keywords"}
+    except Exception as e:
+        logging.error(f"Error fetching SERP data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching SERP data: {str(e)}")
 
 @app.post("/api/fetch-serp-data-by-tag/{tag_id}")
 async def fetch_and_store_serp_data_by_tag(tag_id: int):

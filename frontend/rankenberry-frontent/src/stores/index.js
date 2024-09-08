@@ -65,22 +65,34 @@ export const useMainStore = defineStore('main', {
     },
     async fetchSerpData(projectId, tagId = null) {
       try {
-        const payload = tagId ? { tag_id: tagId } : {};
+        console.log(`Fetching SERP data for project ${projectId} and tag ${tagId}`);
+        const payload = { tag_id: tagId };
         const response = await axios.post(`${API_URL}/fetch-serp-data/${projectId}`, payload);
+        console.log('SERP data fetched successfully:', response.data);
         await this.fetchRankData();
         return response.data;
       } catch (error) {
         console.error('Error fetching SERP data:', error);
+        if (error.response) {
+          console.error('Response data:', error.response.data);
+          console.error('Response status:', error.response.status);
+        }
         throw error;
       }
     },
     async fetchSerpDataByTag(tagId) {
       try {
+        console.log(`Fetching SERP data for tag ${tagId}`)
         const response = await axios.post(`${API_URL}/fetch-serp-data-by-tag/${tagId}`)
+        console.log('SERP data fetched successfully:', response.data)
         await this.fetchRankData()
         return response.data
       } catch (error) {
         console.error('Error fetching SERP data by tag:', error)
+        if (error.response) {
+          console.error('Response data:', error.response.data)
+          console.error('Response status:', error.response.status)
+        }
         throw error
       }
     },
