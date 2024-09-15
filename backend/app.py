@@ -28,6 +28,7 @@ app = FastAPI()
 
 # Set up APScheduler
 engine = create_engine('sqlite:///./rankenberry.db')
+# engine = create_engine('sqlite:///./seo_rank_tracker.db')
 jobstores = {
     'default': SQLAlchemyJobStore(engine=engine)
 }
@@ -36,7 +37,7 @@ scheduler = AsyncIOScheduler(jobstores=jobstores)
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Your Vue.js app's URL
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,6 +67,7 @@ class TagCreate(BaseModel):
 
 class SerpDataRequest(BaseModel):
     tag_id: Optional[int] = None
+    api_source: Optional[str] = None
 
 class ApiSourceUpdate(BaseModel):
     api_source: str
@@ -196,43 +198,33 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
 CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: dict = Body(...)):
+async def fetch_and_store_serp_data(project_id: int, tag_id: Optional[int] = None):
     try:
-        logging.info(f"Received request for project_id: {project_id}, request: {request}")
-        tag_id = request.get('tag_id')
-        keywords = await get_keywords(project_id, tag_id)
+        keywords = await get_keywords(project_id)
         active_keywords = [kw for kw in keywords if kw['active']]
         
-        semaphore = Semaphore(CONCURRENT_REQUESTS)
-        
         async def fetch_and_store(keyword):
-            async with semaphore:
-                try:
-                    serp_data = await fetch_serp_data_for_keyword(keyword['keyword'])
-                    
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
-                    result = c.fetchone()
-                    current_search_volume, last_update = result if result else (None, None)
-                    conn.close()
+            try:
+                serp_data = await fetch_serp_data(keyword['keyword'])
+                current_time = datetime.now()
+                current_search_volume = keyword.get('search_volume')
+                last_update = keyword.get('last_volume_update')
+                
+                should_update_volume = (
+                    current_search_volume is None or 
+                    last_update is None or 
+                    (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+                )
 
-                    current_time = datetime.now()
-                    should_update_volume = (
-                        current_search_volume is None or 
-                        last_update is None or 
-                        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
-                    )
+                if should_update_volume:
+                    search_volume = await fetch_search_volume(keyword['keyword'])
+                else:
+                    search_volume = current_search_volume
 
-                    if should_update_volume:
-                        search_volume = await fetch_search_volume(keyword['keyword'])
-                    else:
-                        search_volume = current_search_volume
-
-                    add_serp_data(keyword['id'], serp_data, search_volume)
-                    logging.info(f"SERP data fetched and stored for keyword: {keyword['keyword']}")
-                except Exception as e:
-                    logging.error(f"Error processing keyword {keyword['keyword']}: {str(e)}")
+                add_serp_data(keyword['id'], serp_data, search_volume)
+                logging.info(f"SERP data fetched and stored for keyword: {keyword['keyword']}")
+            except Exception as e:
+                logging.error(f"Error processing keyword {keyword['keyword']}: {str(e)}")
         
         tasks = [fetch_and_store(keyword) for keyword in active_keywords]
         await asyncio.gather(*tasks)
@@ -282,14 +274,14 @@ async def get_keywords_by_tag(tag_id: int):
 async def get_rank_data():
     conn = get_db_connection()
     rank_data = conn.execute('''
-        SELECT s.id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, p.id as project_id, s.search_volume
+        SELECT s.id as serp_data_id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, p.id as project_id, s.search_volume
         FROM serp_data s
         JOIN keywords k ON s.keyword_id = k.id
         JOIN projects p ON k.project_id = p.id
         ORDER BY s.date DESC
     ''').fetchall()
     conn.close()
-    result = [dict(zip(['id', 'date', 'keyword', 'domain', 'rank', 'keyword_id', 'project_id', 'search_volume'], row)) for row in rank_data]
+    result = [dict(zip(['serp_data_id', 'date', 'keyword', 'domain', 'rank', 'keyword_id', 'project_id', 'search_volume'], row)) for row in rank_data]
     logging.info(f"Rank data: {result}")
     return result
 
@@ -312,42 +304,77 @@ async def get_full_serp_data(serp_data_id: int):
         return result
     raise HTTPException(status_code=404, detail="SERP data not found")
 
-@app.post("/api/fetch-serp-data-single/{keyword_id}")
-async def fetch_and_store_single_serp_data(keyword_id: int, request: SerpDataRequest):
-    api_source = request.api_source
-    logging.info(f"Fetching SERP data for keyword ID {keyword_id} using {api_source}")
+@app.get("/api/serp-data/keyword/{keyword_id}")
+async def get_full_serp_data_by_keyword(keyword_id: int):
+    if keyword_id is None:
+        raise HTTPException(status_code=400, detail="Keyword ID is required")
     conn = get_db_connection()
-    keyword = conn.execute('SELECT keyword, search_volume, last_volume_update FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
+    serp_data = conn.execute('SELECT * FROM serp_data WHERE keyword_id = ? ORDER BY date DESC LIMIT 1', (keyword_id,)).fetchone()
+    conn.close()
+    if serp_data:
+        result = {
+            "id": serp_data['id'],
+            "keyword_id": serp_data['keyword_id'],
+            "date": serp_data['date'],
+            "rank": serp_data['rank'],
+            "full_data": json.loads(serp_data['full_data'])
+        }
+        print("Returning SERP data:", result)
+        return result
+    raise HTTPException(status_code=404, detail="SERP data not found")
+
+@app.post("/api/fetch-serp-data-single/{keyword_id}")
+async def fetch_and_store_single_serp_data(keyword_id: int):
+    logging.info(f"Fetching SERP data for keyword ID {keyword_id}")
+    conn = get_db_connection()
+    keyword = conn.execute('SELECT keyword FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
     conn.close()
     
     if keyword:
-        current_time = datetime.now()
-        should_update_volume = (
-            keyword['search_volume'] is None or 
-            keyword['last_volume_update'] is None or 
-            (current_time - datetime.strptime(keyword['last_volume_update'], "%Y-%m-%d %H:%M:%S")).days > 30
-        )
-        logging.info(f"Should update volume for '{keyword['keyword']}': {should_update_volume}")
-
-        serp_data = await fetch_serp_data(keyword['keyword'])
+        serp_data = await fetch_serp_data_for_keyword(keyword['keyword'])
+        add_serp_data(keyword_id, serp_data, None, 'spaceserp')
         
-        if should_update_volume and api_source != "disabled":
-            search_volume = await fetch_search_volume(keyword['keyword'], api_source)
-            logging.info(f"Fetched search volume for '{keyword['keyword']}': {search_volume}")
-            # Update the keywords table with the new search volume
+        # Fetch the newly added data
+        conn = get_db_connection()
+        new_data = conn.execute('SELECT * FROM serp_data WHERE keyword_id = ? ORDER BY date DESC LIMIT 1', (keyword_id,)).fetchone()
+        conn.close()
+        
+        if new_data:
+            result = {
+                "id": new_data['id'],
+                "keyword_id": new_data['keyword_id'],
+                "date": new_data['date'],
+                "rank": new_data['rank'],
+                "search_volume": new_data['search_volume'],
+                "full_data": json.loads(new_data['full_data'])
+            }
+            return result
+        else:
+            raise HTTPException(status_code=404, detail="Newly fetched SERP data not found")
+    raise HTTPException(status_code=404, detail="Keyword not found")
+
+async def update_search_volume_if_needed(keyword_id, keyword):
+    conn = get_db_connection()
+    result = conn.execute('SELECT search_volume, last_volume_update FROM keywords WHERE id = ?', (keyword_id,)).fetchone()
+    conn.close()
+    
+    current_time = datetime.now()
+    should_update_volume = (
+        result['search_volume'] is None or 
+        result['last_volume_update'] is None or 
+        (current_time - datetime.strptime(result['last_volume_update'], "%Y-%m-%d %H:%M:%S")).days > 30
+    )
+    
+    if should_update_volume:
+        api_source = await get_search_volume_api_source()
+        if api_source != "disabled":
+            search_volume = await fetch_search_volume(keyword, api_source)
             conn = get_db_connection()
             conn.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
                          (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
             conn.commit()
             conn.close()
-        else:
-            search_volume = keyword['search_volume']
-            logging.info(f"Using existing search volume for '{keyword['keyword']}': {search_volume}")
-
-        add_serp_data(keyword_id, serp_data, search_volume, api_source)
-        
-        return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
-    raise HTTPException(status_code=404, detail="Keyword not found")
+            logging.info(f"Updated search volume for '{keyword}': {search_volume}")
 
 import logging
 import aiohttp
@@ -427,6 +454,11 @@ def add_serp_data(keyword_id, serp_data, search_volume, api_source='spaceserp'):
     full_data = json.dumps(serp_data)
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
+    if search_volume is None:
+        # Fetch the existing search volume from the keywords table
+        existing_volume = c.execute('SELECT search_volume FROM keywords WHERE id = ?', (keyword_id,)).fetchone()[0]
+        search_volume = existing_volume if existing_volume is not None else 0
+
     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume, api_source) VALUES (?, ?, ?, ?, ?, ?)',
               (keyword_id, current_time, rank, full_data, search_volume, api_source))
     
@@ -493,9 +525,14 @@ async def activate_keyword(keyword_id: int):
 
 @app.delete("/api/serp_data/{serp_data_id}")
 async def delete_serp_data(serp_data_id: int):
+    if serp_data_id is None:
+        raise HTTPException(status_code=400, detail="Invalid SERP data ID")
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('DELETE FROM serp_data WHERE id = ?', (serp_data_id,))
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"SERP data ID {serp_data_id} not found")
     conn.commit()
     conn.close()
     return {"message": f"SERP data ID {serp_data_id} deleted successfully"}

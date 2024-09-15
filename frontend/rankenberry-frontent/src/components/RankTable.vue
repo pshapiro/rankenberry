@@ -119,11 +119,11 @@
           <td>
             <div class="buttons">
               <button @click="viewDetails(item)" class="button is-small is-info">
-                {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
+                {{ selectedSerpData && selectedSerpData.keyword_id === item.keyword_id ? 'Hide Details' : 'View Details' }}
               </button>
               <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
               <button @click="viewKeywordHistory(item)" class="button is-small is-warning">View History</button>
-              <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
+              <button @click="deleteRankData(item)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
           <td>
@@ -137,18 +137,15 @@
       </tbody>
     </table>
 
-    <!-- Pagination -->
-    <nav class="pagination is-centered" role="navigation" aria-label="pagination">
-      <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
-      <a class="pagination-next" @click="nextPage" :disabled="currentPage === totalPages">Next page</a>
+    <div class="pagination is-centered" role="navigation" aria-label="pagination">
+      <button class="pagination-previous" @click="prevPage" :disabled="currentPage === 1">Previous</button>
+      <button class="pagination-next" @click="nextPage" :disabled="currentPage === totalPages">Next page</button>
       <ul class="pagination-list">
-        <li v-for="page in displayedPages" :key="page">
-          <a class="pagination-link" :class="{ 'is-current': page === currentPage }" @click="goToPage(page)">
-            {{ page }}
-          </a>
+        <li v-for="page in totalPages" :key="page">
+          <a class="pagination-link" :class="{ 'is-current': page === currentPage }" @click="goToPage(page)">{{ page }}</a>
         </li>
       </ul>
-    </nav>
+    </div>
 
     <!-- SERP Details Modal -->
     <div class="modal" :class="{ 'is-active': selectedSerpData }">
@@ -188,13 +185,12 @@ import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
-// Remove this import
-// import ApiSourceSelector from './ApiSourceSelector.vue'
 import { DatePicker } from 'v-calendar'
 import 'v-calendar/dist/style.css'
 
 const store = useMainStore()
-const { rankData, projects, tags } = storeToRefs(store)
+const { projects, tags } = storeToRefs(store)
+const rankData = computed(() => store.rankData)
 const selectedProject = ref('')
 const selectedTag = ref('')
 const selectedSerpData = ref(null)
@@ -221,70 +217,22 @@ const loadKeywordTags = async () => {
 }
 
 const filteredRankData = computed(() => {
-  let filtered = rankData.value
-
-  if (selectedProject.value) {
-    filtered = filtered.filter(item => item.project_id === selectedProject.value)
-  }
-
-  if (selectedTag.value) {
-    filtered = filtered.filter(item => 
-      item.tags && item.tags.some(tag => tag.id === selectedTag.value)
-    )
-  }
-
-  if (dateRange.value.start && dateRange.value.end) {
-    filtered = filtered.filter(item => {
-      const itemDate = new Date(item.date)
-      itemDate.setHours(0, 0, 0, 0) // Reset time to start of day
-      
-      const startDate = new Date(dateRange.value.start)
-      startDate.setHours(0, 0, 0, 0)
-      
-      const endDate = new Date(dateRange.value.end)
-      endDate.setHours(23, 59, 59, 999) // Set time to end of day
-      
-      return itemDate >= startDate && itemDate <= endDate
-    })
-  }
-
-  return filtered
-})
-
-const latestRankData = computed(() => {
-  const keywordMap = new Map()
-  
-  filteredRankData.value.forEach(item => {
-    if (!keywordMap.has(item.keyword_id) || new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)) {
-      keywordMap.set(item.keyword_id, item)
-    }
-  })
-  
-  return Array.from(keywordMap.values())
-})
+  return rankData.value.filter(item => {
+    const projectMatch = !selectedProject.value || item.project_id === selectedProject.value;
+    const tagMatch = !selectedTag.value || (item.tags && item.tags.includes(selectedTag.value));
+    const dateMatch = !dateRange.value.start || !dateRange.value.end || 
+      (new Date(item.date) >= dateRange.value.start && new Date(item.date) <= dateRange.value.end);
+    return projectMatch && tagMatch && dateMatch;
+  });
+});
 
 const paginatedRankData = computed(() => {
-  const startIndex = (currentPage.value - 1) * itemsPerPage
-  const endIndex = startIndex + itemsPerPage
-  return filteredRankData.value.slice(startIndex, endIndex)
-})
+  const startIndex = (currentPage.value - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  return filteredRankData.value.slice(startIndex, endIndex);
+});
 
-const totalPages = computed(() => Math.ceil(filteredRankData.value.length / itemsPerPage))
-
-const displayedPages = computed(() => {
-  const range = 2
-  let start = Math.max(1, currentPage.value - range)
-  let end = Math.min(totalPages.value, currentPage.value + range)
-
-  if (start > 1) {
-    start = Math.max(1, end - range * 2)
-  }
-  if (end < totalPages.value) {
-    end = Math.min(totalPages.value, start + range * 2)
-  }
-
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
-})
+const totalPages = computed(() => Math.ceil(filteredRankData.value.length / itemsPerPage));
 
 const rankChanges = computed(() => {
   const changes = {}
@@ -297,6 +245,18 @@ const rankChanges = computed(() => {
     }
   })
   return changes
+})
+
+const latestRankData = computed(() => {
+  const keywordMap = new Map()
+  
+  filteredRankData.value.forEach(item => {
+    if (!keywordMap.has(item.keyword_id) || new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)) {
+      keywordMap.set(item.keyword_id, item)
+    }
+  })
+  
+  return Array.from(keywordMap.values())
 })
 
 const averageRank = computed(() => {
@@ -337,21 +297,21 @@ const totalSearchVolume = computed(() => {
   }, 0)
 })
 
-const previousPage = () => {
+const prevPage = () => {
   if (currentPage.value > 1) {
-    currentPage.value--
+    currentPage.value--;
   }
-}
+};
 
 const nextPage = () => {
   if (currentPage.value < totalPages.value) {
-    currentPage.value++
+    currentPage.value++;
   }
-}
+};
 
 const goToPage = (page) => {
-  currentPage.value = page
-}
+  currentPage.value = page;
+};
 
 watch([selectedProject, selectedTag, dateRange], async () => {
   currentPage.value = 1
@@ -383,13 +343,13 @@ const fetchSerpData = async () => {
 }
 
 const viewDetails = async (item) => {
-  if (item && item.id) {
-    if (selectedSerpData.value && selectedSerpData.value.id === item.id) {
+  if (item && item.keyword_id) {
+    if (selectedSerpData.value && selectedSerpData.value.keyword_id === item.keyword_id) {
       selectedSerpData.value = null
       selectedKeyword.value = ''
     } else {
       try {
-        const fullSerpData = await store.fetchFullSerpData(item.id)
+        const fullSerpData = await store.fetchFullSerpData(item.keyword_id)
         console.log('Full SERP data fetched:', fullSerpData)
         selectedSerpData.value = fullSerpData
         console.log('Fetched SERP data:', selectedSerpData.value)
@@ -399,7 +359,7 @@ const viewDetails = async (item) => {
       }
     }
   } else {
-    console.error('Invalid item or missing ID:', item)
+    console.error('Invalid item or missing keyword_id:', item)
   }
 }
 
@@ -407,17 +367,22 @@ const fetchSingleSerpData = async (item) => {
   if (item && item.keyword_id) {
     isLoading.value = true
     try {
-      const apiSource = await store.getSearchVolumeApiSource()
-      console.log(`Fetching SERP data for keyword ID ${item.keyword_id} using ${apiSource}`);
-      await store.fetchSingleSerpData(item.keyword_id, apiSource)
-      await store.fetchRankData()
+      console.log(`Fetching SERP data for keyword ID ${item.keyword_id}`);
+      await store.fetchSingleSerpData(item.keyword_id)
+      
+      // The store's rankData has been updated, no need to modify it here
+      console.log('Updated rank data:', store.rankData)
+
+      await loadKeywordTags()
     } catch (error) {
       console.error('Error fetching single SERP data:', error)
+      // Display an error message to the user
     } finally {
       isLoading.value = false
     }
   } else {
     console.error('Invalid item or missing keyword_id:', item)
+    // Display an error message to the user
   }
 }
 
@@ -431,13 +396,25 @@ const closeSerpDetails = () => {
   selectedKeyword.value = ''
 }
 
-const deleteRankData = async (id) => {
-  if (confirm('Are you sure you want to delete this rank data?')) {
+const deleteRankData = async (item) => {
+  if (!item || (!item.serp_data_id && !item.keyword_id)) {
+    console.error('Cannot delete rank data: Invalid item or missing both SERP data ID and keyword ID:', item);
+    return;
+  }
+  
+  const idToDelete = item.serp_data_id || item.keyword_id;
+  const idType = item.serp_data_id ? 'SERP data' : 'keyword';
+  
+  if (confirm(`Are you sure you want to delete this ${idType}?`)) {
     try {
-      await store.deleteRankData(id)
-      await store.fetchRankData()
+      if (item.serp_data_id) {
+        await store.deleteRankData(item.serp_data_id);
+      } else {
+        await store.deleteKeyword(item.keyword_id);
+      }
+      await store.fetchRankData();
     } catch (error) {
-      console.error('Error deleting rank data:', error)
+      console.error(`Error deleting ${idType}:`, error);
     }
   }
 }

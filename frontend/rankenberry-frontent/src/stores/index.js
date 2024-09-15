@@ -96,32 +96,32 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
-    async fetchFullSerpData(serpDataId) {
+    async fetchFullSerpData(keywordId) {
       try {
-        const response = await axios.get(`${API_URL}/serp-data/${serpDataId}`)
-        const data = response.data
-        if (typeof data.full_data === 'string') {
-          try {
-            data.full_data = JSON.parse(data.full_data)
-          } catch (parseError) {
-            console.error('Error parsing full_data:', parseError)
-            data.full_data = {}
-          }
-        }
-        console.log('Full SERP data response:', JSON.stringify(data, null, 2))
-        return data
+        const response = await axios.get(`${API_URL}/serp-data/keyword/${keywordId}`);
+        return response.data;
       } catch (error) {
-        console.error('Error fetching full SERP data:', error)
-        throw error
+        console.error('Error fetching full SERP data:', error);
+        throw error;
       }
     },
-    async fetchSingleSerpData(keywordId, apiSource) {
+    async fetchSingleSerpData(keywordId) {
       try {
-        console.log(`Fetching SERP data for keyword ID ${keywordId} using ${apiSource}`);
-        const response = await axios.post(`${API_URL}/fetch-serp-data-single/${keywordId}`, { api_source: apiSource });
-        console.log("Response:", response.data);
-        // After fetching, update the rankData state
-        await this.fetchRankData();
+        console.log(`Fetching SERP data for keyword ID ${keywordId}`);
+        const response = await axios.post(`${API_URL}/fetch-serp-data-single/${keywordId}`);
+        console.log("SERP data response:", response.data);
+        
+        // Update the rankData state
+        const index = this.rankData.findIndex(item => item.keyword_id === keywordId);
+        if (index !== -1) {
+          this.rankData[index] = response.data;
+        } else {
+          this.rankData.push(response.data);
+        }
+        
+        // Force reactivity
+        this.rankData = [...this.rankData];
+        
         return response.data;
       } catch (error) {
         console.error('Error fetching single SERP data:', error);
@@ -162,6 +162,7 @@ export const useMainStore = defineStore('main', {
       try {
         await axios.delete(`${API_URL}/keywords/${keywordId}`)
         this.keywords = this.keywords.filter(kw => kw.id !== keywordId)
+        this.rankData = this.rankData.filter(item => item.keyword_id !== keywordId)
       } catch (error) {
         console.error('Error deleting keyword:', error)
         throw error
@@ -200,13 +201,18 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
-    async deleteRankData(id) {
+    async deleteRankData(serpDataId) {
       try {
-        await axios.delete(`${API_URL}/serp_data/${id}`)
-        this.rankData = this.rankData.filter(item => item.id !== id)
+        if (serpDataId === null || serpDataId === undefined) {
+          throw new Error('Invalid SERP data ID');
+        }
+        await axios.delete(`${API_URL}/serp_data/${serpDataId}`);
+        console.log(`SERP data with ID ${serpDataId} deleted successfully`);
+        // Remove the deleted item from the local state
+        this.rankData = this.rankData.filter(item => item.serp_data_id !== serpDataId);
       } catch (error) {
-        console.error('Error deleting rank data:', error)
-        throw error
+        console.error('Error deleting rank data:', error);
+        throw error;
       }
     },
     async toggleProjectStatus(projectId) {
