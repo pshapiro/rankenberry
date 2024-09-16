@@ -267,10 +267,10 @@ export const useMainStore = defineStore('main', {
     async getKeywordTags(keywordId) {
       try {
         const response = await axios.get(`${API_URL}/keywords/${keywordId}/tags`)
-        return response.data
+        return response.data || []
       } catch (error) {
-        console.error('Error fetching keyword tags:', error)
-        throw error
+        console.error(`Error fetching tags for keyword ID ${keywordId}:`, error)
+        return []
       }
     },
     async fetchKeywordHistory(keywordId) {

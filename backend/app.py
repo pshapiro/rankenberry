@@ -354,8 +354,22 @@ async def get_all_keywords_route():
 
 @app.delete("/api/keywords/{keyword_id}")
 async def delete_keyword(keyword_id: int):
-    delete_keyword_by_id(keyword_id)
-    return {"message": "Keyword deleted successfully"}
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        # Delete associated SERP data
+        c.execute("DELETE FROM serp_data WHERE keyword_id = ?", (keyword_id,))
+        # Delete the keyword
+        c.execute("DELETE FROM keywords WHERE id = ?", (keyword_id,))
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Keyword not found")
+        conn.commit()
+        return {"message": "Keyword and associated data deleted successfully"}
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
 
 @app.delete("/projects/{project_id}/keywords")
 async def delete_all_keywords(project_id: int):
@@ -364,21 +378,35 @@ async def delete_all_keywords(project_id: int):
 
 @app.put("/api/keywords/{keyword_id}/deactivate")
 async def deactivate_keyword(keyword_id: int):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('UPDATE keywords SET active = 0 WHERE id = ?', (keyword_id,))
-    conn.commit()
-    conn.close()
-    return {"message": f"Keyword ID {keyword_id} deactivated successfully"}
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE keywords SET active = 0 WHERE id = ?", (keyword_id,))
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Keyword not found")
+        conn.commit()
+        return {"message": "Keyword deactivated successfully"}
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
 
 @app.put("/api/keywords/{keyword_id}/activate")
 async def activate_keyword(keyword_id: int):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('UPDATE keywords SET active = 1 WHERE id = ?', (keyword_id,))
-    conn.commit()
-    conn.close()
-    return {"message": f"Keyword ID {keyword_id} activated successfully"}
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE keywords SET active = 1 WHERE id = ?", (keyword_id,))
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Keyword not found")
+        conn.commit()
+        return {"message": "Keyword activated successfully"}
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
 
 @app.delete("/api/serp_data/{serp_data_id}")
 async def delete_serp_data(serp_data_id: int):

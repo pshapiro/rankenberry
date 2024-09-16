@@ -154,7 +154,7 @@ onMounted(async () => {
 
 const loadKeywordTags = async () => {
   for (const keyword of keywords.value) {
-    keyword.tags = await store.getKeywordTags(keyword.id)
+    keyword.tags = (await store.getKeywordTags(keyword.id)) || []
     keyword.selectedTag = ''
   }
 }
@@ -167,7 +167,13 @@ const initializeSelectAll = () => {
 }
 
 const availableTags = (keyword) => {
-  return tags.value.filter(tag => !keyword.tags.some(kwTag => kwTag.id === tag.id))
+  try {
+    const keywordTags = keyword.tags || []
+    return tags.value.filter(tag => !keywordTags.some(kwTag => kwTag.id === tag.id))
+  } catch (error) {
+    console.error(`Error in availableTags for keyword ID ${keyword.id}:`, error)
+    return []
+  }
 }
 
 const createTag = async () => {
@@ -248,5 +254,35 @@ const removeBulkTag = async (projectId) => {
   }
 }
 
-// ... (existing methods for deactivateKeyword, activateKeyword, deleteKeyword, deleteAllKeywords, toggleProjectStatus, deleteProject)
+const deactivateKeyword = async (keywordId) => {
+  try {
+    await store.deactivateKeyword(keywordId)
+    // Optionally show a success message
+  } catch (error) {
+    // Optionally handle the error (e.g., show a notification)
+    console.error('Error deactivating keyword:', error)
+  }
+}
+
+const activateKeyword = async (keywordId) => {
+  try {
+    await store.activateKeyword(keywordId)
+    // Optionally show a success message
+  } catch (error) {
+    // Optionally handle the error
+    console.error('Error activating keyword:', error)
+  }
+}
+
+const deleteKeyword = async (keywordId) => {
+  if (confirm('Are you sure you want to delete this keyword?')) {
+    try {
+      await store.deleteKeyword(keywordId)
+      // Optionally show a success message
+    } catch (error) {
+      // Optionally handle the error
+      console.error('Error deleting keyword:', error)
+    }
+  }
+}
 </script>
