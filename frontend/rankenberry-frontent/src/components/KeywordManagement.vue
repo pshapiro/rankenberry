@@ -1,9 +1,13 @@
 <template>
   <div class="keyword-management">
     <h2 class="title is-2">Keyword Management</h2>
+    
     <div v-if="isLoading">Loading...</div>
-    <div v-else-if="error">{{ error }}</div>
+    <div v-else-if="error" class="notification is-danger">
+      {{ error }}
+    </div>
     <div v-else>
+      <!-- Tag Management Section -->
       <div class="box">
         <h3 class="title is-4">Tag Management</h3>
         <div class="field has-addons">
@@ -22,26 +26,34 @@
         </div>
       </div>
 
+      <!-- Projects Section -->
       <div v-for="project in projects" :key="project.id" class="box">
         <div class="level">
           <div class="level-left">
-            <h3 class="title is-3">{{ project.name }}</h3>
+            <h3 class="title is-3">
+              {{ project.name }}
+              <span v-if="!project.active" class="tag is-danger is-light">Disabled</span>
+            </h3>
           </div>
           <div class="level-right">
             <div class="buttons">
               <button @click="toggleProjectStatus(project.id)" class="button is-warning is-small">
                 {{ project.active ? 'Disable' : 'Enable' }}
               </button>
-              <button @click="deleteProject(project.id)" class="button is-danger is-small">Delete</button>
+              <button @click="confirmDeleteProject(project.id)" class="button is-danger is-small">Delete</button>
             </div>
           </div>
         </div>
+
+        <!-- Select All Checkbox -->
         <div class="field">
           <label class="checkbox">
             <input type="checkbox" v-model="selectAll[project.id]" @change="toggleAllKeywords(project.id)">
             Select All
           </label>
         </div>
+
+        <!-- Bulk Tagging Controls -->
         <div class="field has-addons">
           <div class="control">
             <div class="select">
@@ -58,6 +70,8 @@
             <button @click="removeBulkTag(project.id)" class="button is-danger" :disabled="!selectedBulkTag[project.id]">Remove Tag</button>
           </div>
         </div>
+
+        <!-- Keywords Table -->
         <table class="table is-fullwidth">
           <thead>
             <tr>
@@ -113,12 +127,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 
 const store = useMainStore()
 const { projects, keywords, tags } = storeToRefs(store)
+
+// Destructure the necessary actions from the store
+const { deleteProject, toggleProjectStatus } = store
 
 const isLoading = ref(false)
 const error = ref(null)
@@ -126,6 +143,7 @@ const newTagName = ref('')
 const selectAll = ref({})
 const selectedBulkTag = ref({})
 
+// Computed property to map keywords to their respective projects
 const projectKeywords = computed(() => {
   const keywordsByProject = {}
   projects.value.forEach(project => {
@@ -140,7 +158,7 @@ onMounted(async () => {
   isLoading.value = true
   try {
     await store.fetchProjects()
-    await store.fetchKeywords()
+    await store.fetchAllKeywords()
     await store.fetchTags()
     await loadKeywordTags()
     initializeSelectAll()
@@ -228,7 +246,7 @@ const applyBulkTag = async (projectId) => {
   const selectedKeywordIds = projectKeywords.value[projectId]
     .filter(keyword => keyword.selected)
     .map(keyword => keyword.id)
-  
+
   if (selectedKeywordIds.length > 0 && selectedBulkTag.value[projectId]) {
     try {
       await store.bulkTagKeywords(selectedKeywordIds, selectedBulkTag.value[projectId])
@@ -241,7 +259,7 @@ const applyBulkTag = async (projectId) => {
 
 const removeBulkTag = async (projectId) => {
   const selectedKeywords = projectKeywords.value[projectId].filter(keyword => keyword.selected)
-  
+
   if (selectedKeywords.length > 0 && selectedBulkTag.value[projectId]) {
     try {
       for (const keyword of selectedKeywords) {
@@ -257,9 +275,7 @@ const removeBulkTag = async (projectId) => {
 const deactivateKeyword = async (keywordId) => {
   try {
     await store.deactivateKeyword(keywordId)
-    // Optionally show a success message
   } catch (error) {
-    // Optionally handle the error (e.g., show a notification)
     console.error('Error deactivating keyword:', error)
   }
 }
@@ -267,9 +283,7 @@ const deactivateKeyword = async (keywordId) => {
 const activateKeyword = async (keywordId) => {
   try {
     await store.activateKeyword(keywordId)
-    // Optionally show a success message
   } catch (error) {
-    // Optionally handle the error
     console.error('Error activating keyword:', error)
   }
 }
@@ -278,11 +292,28 @@ const deleteKeyword = async (keywordId) => {
   if (confirm('Are you sure you want to delete this keyword?')) {
     try {
       await store.deleteKeyword(keywordId)
-      // Optionally show a success message
     } catch (error) {
-      // Optionally handle the error
       console.error('Error deleting keyword:', error)
     }
   }
 }
+
+const confirmDeleteProject = async (projectId) => {
+  const confirmed = confirm('Are you sure you want to delete this project? This action cannot be undone.')
+  if (confirmed) {
+    try {
+      await deleteProject(projectId)
+    } catch (err) {
+      error.value = 'Error deleting project. Please try again.'
+      console.error('Error deleting project:', err)
+    }
+  }
+}
+
+// Watch for changes in the error and handle accordingly
+watch(error, (newError) => {
+  if (newError) {
+    console.error('An error occurred:', newError)
+  }
+})
 </script>

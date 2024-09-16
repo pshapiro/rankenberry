@@ -349,8 +349,17 @@ async def add_keywords(data: dict):
     return added_keywords
 
 @app.get("/api/keywords")
-async def get_all_keywords_route():
-    return get_all_keywords()
+async def get_all_keywords():
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM keywords")
+        keywords = c.fetchall()
+        conn.close()
+        return [dict(kw) for kw in keywords]
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.delete("/api/keywords/{keyword_id}")
 async def delete_keyword(keyword_id: int):
@@ -419,14 +428,29 @@ async def delete_serp_data(serp_data_id: int):
 
 @app.put("/api/projects/{project_id}/toggle-status")
 async def toggle_project_status(project_id: int):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('UPDATE projects SET active = NOT active WHERE id = ?', (project_id,))
-    c.execute('SELECT * FROM projects WHERE id = ?', (project_id,))
-    updated_project = c.fetchone()
-    conn.commit()
-    conn.close()
-    return {"id": updated_project[0], "name": updated_project[1], "domain": updated_project[2], "active": bool(updated_project[3])}
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        # Get current status
+        c.execute("SELECT active FROM projects WHERE id = ?", (project_id,))
+        project = c.fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        new_status = 0 if project['active'] else 1
+        c.execute("UPDATE projects SET active = ? WHERE id = ?", (new_status, project_id))
+        conn.commit()
+
+        # Fetch updated project
+        c.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        updated_project = c.fetchone()
+
+        return {"message": "Project status toggled successfully", "project": dict(updated_project)}
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: int):

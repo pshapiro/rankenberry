@@ -129,12 +129,12 @@ export const useMainStore = defineStore('main', {
       }
       await this.fetchRankData()
     },
-    async fetchKeywords() {
+    async fetchAllKeywords() {
       try {
         const response = await axios.get(`${API_URL}/keywords`)
         this.keywords = response.data
       } catch (error) {
-        console.error('Error fetching keywords:', error)
+        console.error('Error fetching all keywords:', error)
         throw error
       }
     },
@@ -191,12 +191,8 @@ export const useMainStore = defineStore('main', {
     },
     async toggleProjectStatus(projectId) {
       try {
-        const response = await axios.put(`${API_URL}/projects/${projectId}/toggle-status`)
-        const updatedProject = response.data
-        const index = this.projects.findIndex(p => p.id === projectId)
-        if (index !== -1) {
-          this.projects[index] = updatedProject
-        }
+        await axios.put(`${API_URL}/projects/${projectId}/toggle-status`)
+        await this.fetchProjects() // Re-fetch to ensure state consistency
       } catch (error) {
         console.error('Error toggling project status:', error)
         throw error
