@@ -1,7 +1,13 @@
+from typing import List, Dict, Optional
 import sqlite3
 from datetime import datetime
 import logging
 import json
+
+def get_db_connection():
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = sqlite3.connect('seo_rank_tracker.db')
@@ -28,6 +34,7 @@ def init_db():
                   date TEXT NOT NULL,
                   rank INTEGER,
                   full_data TEXT,
+                  search_volume INTEGER,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
     c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
@@ -126,3 +133,35 @@ def delete_keywords_by_project(project_id):
     c.execute("DELETE FROM keywords WHERE project_id = ?", (project_id,))
     conn.commit()
     conn.close()
+
+def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = '''
+        SELECT s.date, s.rank, s.search_volume, p.domain, s.full_data
+        FROM serp_data s
+        JOIN keywords k ON s.keyword_id = k.id
+        JOIN projects p ON k.project_id = p.id
+        WHERE k.project_id = ? AND s.date BETWEEN ? AND ?
+    '''
+    params = (project_id, start_date, end_date)
+
+    if tag_id:
+        query += ' AND k.id IN (SELECT keyword_id FROM keyword_tags WHERE tag_id = ?)'
+        params += (tag_id,)
+
+    cursor.execute(query, params)
+    data = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            'date': row['date'],
+            'rank': row['rank'],
+            'search_volume': row['search_volume'],
+            'domain': row['domain'],
+            'full_data': row['full_data']
+        }
+        for row in data
+    ]

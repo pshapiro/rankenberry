@@ -6,15 +6,21 @@ import uvicorn
 import os
 from dotenv import load_dotenv
 import aiohttp
-from database import add_serp_data, get_keywords, get_all_keywords, delete_keyword_by_id, delete_keywords_by_project
+from database import (
+    add_serp_data,
+    get_keywords,
+    get_all_keywords,
+    delete_keyword_by_id,
+    delete_keywords_by_project,
+    get_serp_data_within_date_range
+)
 import json
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Dict, Optional, Union
 import asyncio
 from asyncio import Semaphore
 import logging
-import aiohttp
-import json
+from collections import defaultdict
 
 load_dotenv()
 
@@ -23,7 +29,7 @@ app = FastAPI()
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Your Vue.js app's URL
+    allow_origins=["http://localhost:5173"],  # Adjust if frontend runs on a different origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,6 +59,27 @@ class TagCreate(BaseModel):
 
 class SerpDataRequest(BaseModel):
     tag_id: Optional[int] = None
+
+class DateRangeRequest(BaseModel):
+    start: str
+    end: str
+
+class LineChartData(BaseModel):
+    name: str
+    dates: List[str]
+    shares: List[float]
+
+class DonutChartData(BaseModel):
+    name: str
+    share: float
+
+class ShareOfVoiceResponse(BaseModel):
+    lineChartData: List[LineChartData]
+    donutChartData: List[DonutChartData]
+
+class ShareOfVoiceRequest(BaseModel):
+    date_range: DateRangeRequest
+    tag_id: Optional[Union[int, str]] = None
 
 # Database functions
 def get_db_connection():
@@ -190,7 +217,9 @@ async def fetch_and_store_serp_data_by_tag(tag_id: int):
     for keyword in keywords:
         if keyword['active']:
             serp_data = await fetch_serp_data(keyword['keyword'])
-            add_serp_data(keyword['id'], serp_data)
+            # Fetch the search volume for the keyword
+            search_volume = await fetch_search_volume(keyword['keyword'])
+            add_serp_data(keyword['id'], serp_data, search_volume)
     return {"message": "SERP data fetched and stored successfully for active keywords with the specified tag"}
 
 async def get_keywords(project_id: int, tag_id: Optional[int] = None):
@@ -620,6 +649,90 @@ async def update_search_volume(keyword_id, keyword):
         logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
     
     conn.close()
+
+@app.post("/api/share-of-voice/{project_id}", response_model=ShareOfVoiceResponse)
+async def get_share_of_voice(
+    project_id: int, 
+    request: ShareOfVoiceRequest
+):
+    try:
+        start_date = request.date_range.start
+        end_date = request.date_range.end
+        tag_id = request.tag_id
+
+        logging.info(f"Fetching Share of Voice for Project ID {project_id} from {start_date} to {end_date} with Tag ID {tag_id}")
+
+        serp_data = get_serp_data_within_date_range(project_id, start_date, end_date, tag_id)
+        logging.info(f"Fetched SERP data: {serp_data}")
+
+        if not serp_data:
+            raise HTTPException(status_code=404, detail="No SERP data found for the given criteria.")
+
+        # Calculate Share of Voice (SOV)
+        daily_sov = defaultdict(lambda: defaultdict(float))
+        total_search_volume = defaultdict(float)
+        all_domains = set()
+
+        for entry in serp_data:
+            date = entry['date'].split(' ')[0]  # Extract date
+            rank = entry['rank']
+            search_volume = entry['search_volume'] or 0
+
+            # Only consider ranks 1-10 for SOV calculation
+            if rank and 1 <= rank <= 10:
+                # Parse the full_data to get all domains in top 10
+                full_data = json.loads(entry['full_data'])
+                for result in full_data.get('organic_results', [])[:10]:
+                    domain = result.get('domain')
+                    if domain:
+                        all_domains.add(domain)
+                        position = result.get('position')
+                        if position and 1 <= position <= 10:
+                            sov_score = (11 - position) / 55  # Example SOV calculation
+                            daily_sov[date][domain] += sov_score * search_volume
+                
+                total_search_volume[date] += search_volume
+
+        if not daily_sov:
+            raise HTTPException(status_code=404, detail="No Share of Voice data available for the given criteria.")
+
+        # Normalize SOV scores
+        for date in daily_sov:
+            if total_search_volume[date] > 0:
+                for domain in daily_sov[date]:
+                    daily_sov[date][domain] = (daily_sov[date][domain] / total_search_volume[date]) * 100
+
+        # Prepare data for line chart
+        line_chart_data = [
+            LineChartData(
+                name=domain,
+                dates=sorted(daily_sov.keys()),
+                shares=[daily_sov[date].get(domain, 0) for date in sorted(daily_sov.keys())]
+            )
+            for domain in all_domains
+        ]
+
+        # Prepare data for donut chart (most recent date)
+        most_recent_date = max(daily_sov.keys())
+        donut_chart_data = [
+            DonutChartData(
+                name=domain, 
+                share=daily_sov[most_recent_date].get(domain, 0)
+            )
+            for domain in all_domains
+        ]
+
+        logging.info(f"Returning Share of Voice data with {len(line_chart_data)} domains for line chart and {len(donut_chart_data)} domains for donut chart.")
+        logging.info(f"Daily SOV: {dict(daily_sov)}")
+        logging.info(f"Total Search Volume: {dict(total_search_volume)}")
+
+        return ShareOfVoiceResponse(
+            lineChartData=line_chart_data,
+            donutChartData=donut_chart_data
+        )
+    except Exception as e:
+        logging.exception("An error occurred while processing Share of Voice request")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
