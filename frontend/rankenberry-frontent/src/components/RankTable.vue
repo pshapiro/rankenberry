@@ -526,8 +526,13 @@ const closeShareOfVoiceModal = () => {
 @import 'v-calendar/dist/style.css';
 
 .modal-card {
-  width: 90%;
+  width: 95%;
   max-width: 1200px;
+}
+
+.modal-card-body {
+  padding: 20px;
+  width: 100%;
 }
 
 .loading-overlay {

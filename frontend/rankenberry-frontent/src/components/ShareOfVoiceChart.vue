@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="share-of-voice-chart">
     <h2 class="title is-2">Share of Voice</h2>
     <div class="field is-grouped">
       <div class="control">
@@ -23,8 +23,10 @@
     <div v-if="isLoading">Loading...</div>
     <div v-else-if="error">{{ error }}</div>
     <div v-else-if="lineChartData.length > 0 && donutChartData.length > 0" class="charts">
-      <div v-show="showCharts">
+      <div v-show="showCharts" class="chart-wrapper">
         <div ref="stackedBarChart" class="chart-container"></div>
+      </div>
+      <div v-show="showCharts" class="chart-wrapper">
         <div ref="donutChart" class="chart-container"></div>
       </div>
       <table class="table is-fullwidth is-striped is-hoverable">
@@ -129,19 +131,38 @@ const createCharts = () => {
 
   // Create Stacked Bar Chart
   const dates = lineChartData.value[0].dates;
-  const traces = lineChartData.value.map(domain => ({
+  const topDomains = new Set(topDonutChartData.value.map(d => d.name));
+  const filteredData = lineChartData.value.filter(domain => topDomains.has(domain.name));
+
+  // Sort domains by their average share
+  filteredData.sort((a, b) => {
+    const avgA = a.shares.reduce((sum, share) => sum + share, 0) / a.shares.length;
+    const avgB = b.shares.reduce((sum, share) => sum + share, 0) / b.shares.length;
+    return avgB - avgA;
+  });
+
+  const traces = filteredData.map(domain => ({
     x: dates,
     y: domain.shares,
     type: 'bar',
     name: domain.name,
   }));
 
-  Plotly.newPlot(stackedBarChart.value, traces, {
+  const layout = {
     title: 'Share of Voice Over Time',
     barmode: 'stack',
     xaxis: { title: 'Date' },
     yaxis: { title: 'Share of Voice (%)', range: [0, 100] },
-  });
+    autosize: true,
+    margin: { l: 50, r: 50, b: 50, t: 50, pad: 4 }
+  };
+
+  const config = {
+    responsive: true,
+    useResizeHandler: true,
+  };
+
+  Plotly.newPlot(stackedBarChart.value, traces, layout, config);
 
   // Create Donut Chart
   const donutData = [{
@@ -152,7 +173,13 @@ const createCharts = () => {
     textinfo: 'label+percent',
   }];
 
-  Plotly.newPlot(donutChart.value, donutData, { title: 'Current Share of Voice' });
+  const donutLayout = {
+    title: 'Current Share of Voice',
+    autosize: true,
+    margin: { l: 50, r: 50, b: 50, t: 50, pad: 4 }
+  };
+
+  Plotly.newPlot(donutChart.value, donutData, donutLayout, config);
 
   console.log('Charts created successfully.');
 };
@@ -163,19 +190,36 @@ onMounted(() => {
   if (props.projectId) {
     fetchShareOfVoiceData();
   }
+  window.addEventListener('resize', () => {
+    if (stackedBarChart.value && donutChart.value) {
+      Plotly.Plots.resize(stackedBarChart.value);
+      Plotly.Plots.resize(donutChart.value);
+    }
+  });
 });
 
 console.log('Plotly object:', Plotly);
 </script>
 
 <style scoped>
+.share-of-voice-chart {
+  width: 100%;
+}
+
 .charts {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  width: 100%;
 }
-.chart-container {
+
+.chart-wrapper {
   width: 100%;
   height: 400px;
+}
+
+.chart-container {
+  width: 100%;
+  height: 100%;
 }
 </style>
