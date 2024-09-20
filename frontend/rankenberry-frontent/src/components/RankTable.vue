@@ -23,32 +23,33 @@
         </div>
       </div>
       <div class="control is-expanded">
-        <DatePicker v-model="dateRange" is-range>
-          <template v-slot="{ inputValue, inputEvents }">
-            <div class="field has-addons">
-              <div class="control">
-                <input
-                  class="input"
-                  :value="inputValue.start"
-                  v-on="inputEvents.start"
-                  placeholder="Start date"
-                />
-              </div>
-              <div class="control">
-                <input
-                  class="input"
-                  :value="inputValue.end"
-                  v-on="inputEvents.end"
-                  placeholder="End date"
-                />
-              </div>
-            </div>
-          </template>
-        </DatePicker>
+        <div class="field is-grouped">
+          <div class="control">
+            <input
+              type="date"
+              v-model="dateRange.start"
+              class="input"
+              @change="updateDateRange"
+            />
+          </div>
+          <div class="control">
+            <input
+              type="date"
+              v-model="dateRange.end"
+              class="input"
+              @change="updateDateRange"
+            />
+          </div>
+        </div>
       </div>
       <div class="control">
         <button @click="fetchSerpData" :disabled="!selectedProject && !selectedTag" class="button is-primary">
           Fetch Latest SERP Data
+        </button>
+      </div>
+      <div class="control">
+        <button @click="showShareOfVoice" class="button is-info" :disabled="!selectedProject">
+          Share of Voice
         </button>
       </div>
     </div>
@@ -176,6 +177,23 @@
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-spinner"></div>
     </div>
+
+    <!-- Share of Voice Modal -->
+    <div class="modal" :class="{ 'is-active': isShareOfVoiceModalOpen }">
+      <div class="modal-background" @click="closeShareOfVoiceModal"></div>
+      <div class="modal-card">
+        <header class="modal-card-head">
+          <p class="modal-card-title">Share of Voice</p>
+          <button class="delete" aria-label="close" @click="closeShareOfVoiceModal"></button>
+        </header>
+        <section class="modal-card-body">
+          <ShareOfVoiceChart
+            :projectId="selectedProject ? parseInt(selectedProject) : null"
+            :tagId="selectedTag"
+          />
+        </section>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -185,8 +203,8 @@ import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
-import { DatePicker } from 'v-calendar'
-import 'v-calendar/dist/style.css'
+import ShareOfVoiceChart from './ShareOfVoiceChart.vue'
+import Plotly from 'plotly.js-dist-min'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
@@ -201,6 +219,11 @@ const isKeywordHistoryModalOpen = ref(false)
 const selectedKeywordId = ref(null)
 const keywordHistory = ref([])
 const dateRange = ref({ start: null, end: null })
+const isShareOfVoiceModalOpen = ref(false)
+const shareOfVoiceData = ref(null)
+const donutChartData = ref(null)
+const lineChart = ref(null)
+const donutChart = ref(null)
 
 onMounted(async () => {
   store.fetchProjects()
@@ -485,6 +508,18 @@ const formatDateTime = (dateTimeString) => {
     date.toLocaleTimeString()
   ]
 }
+
+const showShareOfVoice = () => {
+  if (!selectedProject.value) {
+    alert('Please select a project before viewing Share of Voice.');
+    return;
+  }
+  isShareOfVoiceModalOpen.value = true;
+};
+
+const closeShareOfVoiceModal = () => {
+  isShareOfVoiceModalOpen.value = false;
+};
 </script>
 
 <style scoped>

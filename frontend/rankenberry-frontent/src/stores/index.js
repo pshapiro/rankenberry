@@ -278,5 +278,20 @@ export const useMainStore = defineStore('main', {
         throw error
       }
     },
+    async fetchShareOfVoiceData(projectId, payload) {
+      try {
+        console.log('Sending request with data:', payload);
+        const response = await axios.post(`${API_URL}/share-of-voice/${projectId}`, payload);
+        console.log('Received response:', response.data);
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching share of voice data:', error);
+        if (error.response) {
+          console.log('Response status:', error.response.status);
+          console.log('Response data:', error.response.data);
+        }
+        throw error;
+      }
+    },
   }
 })
