@@ -24,7 +24,7 @@
     <div v-else-if="error">{{ error }}</div>
     <div v-else-if="lineChartData.length > 0 && donutChartData.length > 0" class="charts">
       <div v-show="showCharts">
-        <div ref="lineChart" class="chart-container"></div>
+        <div ref="stackedBarChart" class="chart-container"></div>
         <div ref="donutChart" class="chart-container"></div>
       </div>
       <table class="table is-fullwidth is-striped is-hoverable">
@@ -67,7 +67,7 @@ const startDate = ref(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOStrin
 const endDate = ref(new Date().toISOString().split('T')[0]);
 const lineChartData = ref([]);
 const donutChartData = ref([]);
-const lineChart = ref(null);
+const stackedBarChart = ref(null);
 const donutChart = ref(null);
 const isLoading = ref(false);
 const error = ref(null);
@@ -114,7 +114,7 @@ const fetchShareOfVoiceData = async () => {
 
 const createCharts = () => {
   console.log('Creating charts...');
-  console.log('Line chart container:', lineChart.value);
+  console.log('Stacked bar chart container:', stackedBarChart.value);
   console.log('Donut chart container:', donutChart.value);
 
   if (lineChartData.value.length === 0 || donutChartData.value.length === 0) {
@@ -122,22 +122,23 @@ const createCharts = () => {
     return;
   }
 
-  if (!lineChart.value || !donutChart.value) {
+  if (!stackedBarChart.value || !donutChart.value) {
     console.warn('Chart containers not ready.');
     return;
   }
 
-  // Create Line Chart
+  // Create Stacked Bar Chart
+  const dates = lineChartData.value[0].dates;
   const traces = lineChartData.value.map(domain => ({
-    x: domain.dates,
+    x: dates,
     y: domain.shares,
-    type: 'scatter',
-    mode: 'lines+markers',
+    type: 'bar',
     name: domain.name,
   }));
 
-  Plotly.newPlot(lineChart.value, traces, {
+  Plotly.newPlot(stackedBarChart.value, traces, {
     title: 'Share of Voice Over Time',
+    barmode: 'stack',
     xaxis: { title: 'Date' },
     yaxis: { title: 'Share of Voice (%)', range: [0, 100] },
   });
