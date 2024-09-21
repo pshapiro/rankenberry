@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import sqlite3
 import uvicorn
 import os
@@ -21,15 +21,18 @@ import asyncio
 from asyncio import Semaphore
 import logging
 from collections import defaultdict
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.base import JobLookupError
+import atexit
 
 load_dotenv()
 
 app = FastAPI()
 
-# CORS configuration
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Adjust if frontend runs on a different origin
+    allow_origins=["http://localhost:5173"],  # Add your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -121,6 +124,15 @@ def init_db():
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id),
                   FOREIGN KEY (tag_id) REFERENCES tags (id),
                   UNIQUE(keyword_id, tag_id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS scheduled_pulls
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  project_id INTEGER,
+                  tag_id INTEGER,
+                  frequency TEXT,
+                  next_pull TEXT,
+                  last_run TEXT,
+                  FOREIGN KEY (project_id) REFERENCES projects (id),
+                  FOREIGN KEY (tag_id) REFERENCES tags (id))''')
     conn.commit()
     conn.close()
 
@@ -574,8 +586,6 @@ async def get_keyword_tags(keyword_id: int):
     conn.close()
     return [{"id": tag['id'], "name": tag['name']} for tag in tags]
 
-from typing import Optional
-
 class KeywordHistoryEntry(BaseModel):
     date: str
     rank: int
@@ -733,6 +743,477 @@ async def get_share_of_voice(
     except Exception as e:
         logging.exception("An error occurred while processing Share of Voice request")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Pydantic models
+
+class SchedulePullRequest(BaseModel):
+    project_id: int
+    tag_id: Optional[int] = None
+    frequency: str
+
+    @validator('frequency', allow_reuse=True)
+    def validate_frequency(cls, v):
+        if v not in ['daily', 'weekly', 'monthly', 'test']:
+            raise ValueError('Invalid frequency')
+        return v
+
+class ScheduledPull(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    tag_id: Optional[int]
+    tag_name: Optional[str]
+    frequency: str
+    last_run: Optional[str]
+    next_pull: str
+
+# Initialize the AsyncIOScheduler
+scheduler = AsyncIOScheduler()
+
+# Ensure the scheduler is shut down gracefully
+atexit.register(lambda: scheduler.shutdown())
+
+# Start the scheduler
+scheduler.start()
+
+async def perform_pull(pull_id: int):
+    try:
+        logging.info(f"Starting perform_pull for ID: {pull_id}")
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM scheduled_pulls WHERE id = ?", (pull_id,))
+        pull = c.fetchone()
+        
+        if pull:
+            project_id = pull['project_id']
+            tag_id = pull['tag_id']
+            frequency = pull['frequency']
+            last_run = datetime.fromisoformat(pull['last_run']) if pull['last_run'] else None
+            next_pull = datetime.fromisoformat(pull['next_pull'])
+            current_time = datetime.now()
+            
+            # Check if we missed any pulls
+            while next_pull < current_time:
+                logging.warning(f"Missed pull for ID: {pull_id}, scheduled at {next_pull}")
+                await update_project_rankings(project_id, tag_id)
+                last_run = next_pull
+                next_pull = calculate_next_pull(frequency, last_run)
+            
+            # Perform the current pull
+            await update_project_rankings(project_id, tag_id)
+            
+            # Update last_run and next_pull in the database
+            next_pull = calculate_next_pull(frequency, current_time)
+            c.execute("UPDATE scheduled_pulls SET last_run = ?, next_pull = ? WHERE id = ?", 
+                      (current_time.isoformat(), next_pull.isoformat(), pull_id))
+            conn.commit()
+            
+            logging.info(f"Completed perform_pull for ID: {pull_id}. Next pull scheduled for {next_pull}")
+        else:
+            logging.warning(f"Scheduled pull with ID {pull_id} not found")
+        
+        conn.close()
+        
+        # Reschedule the next pull
+        await reschedule_pull(pull_id)
+    except Exception as e:
+        logging.error(f"Error in perform_pull for ID {pull_id}: {e}")
+        # You might want to implement a retry mechanism or alert system here
+async def reschedule_pull(pull_id: int):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM scheduled_pulls WHERE id = ?", (pull_id,))
+    pull = c.fetchone()
+    
+    if pull:
+        frequency = pull['frequency']
+        next_pull = calculate_next_pull(frequency)
+        c.execute("UPDATE scheduled_pulls SET next_pull = ? WHERE id = ?", (next_pull.isoformat(), pull_id))
+        conn.commit()
+        
+        scheduler.add_job(
+            perform_pull,
+            'date',
+            run_date=next_pull,
+            args=[pull_id],
+            id=f"pull_{pull_id}"
+        )
+    
+    conn.close()
+
+def calculate_next_pull(frequency: str, start_time: Optional[datetime] = None) -> datetime:
+    if start_time is None:
+        start_time = datetime.now()
+    if frequency == 'daily':
+        next_pull = start_time + timedelta(days=1)
+    elif frequency == 'weekly':
+        next_pull = start_time + timedelta(weeks=1)
+    elif frequency == 'monthly':
+        next_month = start_time.month + 1
+        next_year = start_time.year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        next_pull = datetime(next_year, next_month, start_time.day, start_time.hour, start_time.minute)
+    elif frequency == 'test':
+        next_pull = start_time + timedelta(minutes=1)  # For testing purposes
+    else:
+        raise ValueError(f"Invalid frequency: {frequency}")
+    return next_pull
+
+async def update_project_rankings(project_id: int, tag_id: Optional[int]):
+    try:
+        logging.info(f"Starting update_project_rankings for project_id: {project_id}, tag_id: {tag_id}")
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Fetch the project details
+        c.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        project = c.fetchone()
+        
+        if project:
+            # Fetch the tag details if tag_id is provided
+            if tag_id:
+                c.execute("SELECT * FROM tags WHERE id = ?", (tag_id,))
+                tag = c.fetchone()
+                if not tag:
+                    logging.warning(f"Tag with ID {tag_id} not found")
+                    return
+            else:
+                tag = None
+            
+            # Fetch keywords for the project (and tag if provided)
+            if tag_id:
+                c.execute("SELECT * FROM keywords WHERE project_id = ? AND tag_id = ?", (project_id, tag_id))
+            else:
+                c.execute("SELECT * FROM keywords WHERE project_id = ?", (project_id,))
+            keywords = c.fetchall()
+            
+            # Fetch and update rankings for each keyword
+            for keyword in keywords:
+                await fetch_and_update_rankings(conn, project, keyword, tag)
+            
+            logging.info(f"Completed update_project_rankings for project_id: {project_id}, tag_id: {tag_id}")
+        else:
+            logging.warning(f"Project with ID {project_id} not found")
+        
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error in update_project_rankings for project_id: {project_id}, tag_id: {tag_id}: {e}")
+
+@app.post("/api/schedule-rank-pull", response_model=ScheduledPull)
+async def schedule_rank_pull(pull: SchedulePullRequest):
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Validate project_id
+        c.execute("SELECT name FROM projects WHERE id = ?", (pull.project_id,))
+        project = c.fetchone()
+        if not project:
+            conn.close()
+            raise HTTPException(status_code=422, detail="Invalid project_id")
+        project_name = project['name']
+        
+        # Validate tag_id if provided
+        if pull.tag_id is not None:
+            c.execute("SELECT name FROM tags WHERE id = ?", (pull.tag_id,))
+            tag = c.fetchone()
+            if not tag:
+                conn.close()
+                raise HTTPException(status_code=422, detail="Invalid tag_id")
+            tag_name = tag['name']
+        else:
+            tag_name = None
+        
+        next_pull = calculate_next_pull(pull.frequency)
+        c.execute("""
+            INSERT INTO scheduled_pulls (project_id, tag_id, frequency, next_pull)
+            VALUES (?, ?, ?, ?)
+        """, (pull.project_id, pull.tag_id, pull.frequency, next_pull.isoformat()))
+        pull_id = c.lastrowid
+        conn.commit()
+        
+        # Fetch the inserted scheduled pull with project_name and tag_name
+        c.execute("""
+            SELECT sp.id, sp.project_id, p.name as project_name, 
+                   sp.tag_id, t.name as tag_name, 
+                   sp.frequency, sp.next_pull
+            FROM scheduled_pulls sp
+            LEFT JOIN projects p ON sp.project_id = p.id
+            LEFT JOIN tags t ON sp.tag_id = t.id
+            WHERE sp.id = ?
+        """, (pull_id,))
+        scheduled_pull = c.fetchone()
+        conn.close()
+
+        # Add job to AsyncIOScheduler
+        scheduler.add_job(
+            perform_pull,
+            'date',
+            run_date=next_pull,
+            args=[pull_id],
+            id=f"pull_{pull_id}"
+        )
+
+        return ScheduledPull(
+            id=scheduled_pull['id'],
+            project_id=scheduled_pull['project_id'],
+            project_name=scheduled_pull['project_name'] or "Unknown Project",
+            tag_id=scheduled_pull['tag_id'],
+            tag_name=scheduled_pull['tag_name'],
+            frequency=scheduled_pull['frequency'],
+            last_run=None,
+            next_pull=scheduled_pull['next_pull']
+        )
+    except Exception as e:
+        logging.error(f"Error in schedule_rank_pull: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/api/scheduled-pulls")
+async def get_scheduled_pulls():
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT sp.id, sp.project_id, p.name as project_name, 
+                   sp.tag_id, t.name as tag_name, 
+                   sp.frequency, sp.last_run, sp.next_pull
+            FROM scheduled_pulls sp
+            LEFT JOIN projects p ON sp.project_id = p.id
+            LEFT JOIN tags t ON sp.tag_id = t.id
+        """)
+        scheduled_pulls = c.fetchall()
+        conn.close()
+
+        return [
+            ScheduledPull(
+                id=pull['id'],
+                project_id=pull['project_id'],
+                project_name=pull['project_name'] or "Unknown Project",
+                tag_id=pull['tag_id'],
+                tag_name=pull['tag_name'],
+                frequency=pull['frequency'],
+                last_run=pull['last_run'],
+                next_pull=pull['next_pull']
+            )
+            for pull in scheduled_pulls
+        ]
+    except Exception as e:
+        logging.error(f"Error in get_scheduled_pulls: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
+@app.delete("/api/scheduled-pulls/{pull_id}")
+async def delete_scheduled_pull(pull_id: int):
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("DELETE FROM scheduled_pulls WHERE id = ?", (pull_id,))
+        if c.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Scheduled pull not found")
+        conn.commit()
+        conn.close()
+        
+        # Remove the job from the scheduler
+        try:
+            scheduler.remove_job(f"pull_{pull_id}")
+        except JobLookupError:
+            pass  # Job wasn't scheduled, which is fine
+        
+        return {"message": "Scheduled pull deleted successfully"}
+    except Exception as e:
+        logging.error(f"Error deleting scheduled pull {pull_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+async def fetch_search_volume(keyword):
+    url = "https://data.grepwords.com/v1/keywords/lookup"
+    headers = {
+        "accept": "application/json",
+        "api_key": GREPWORDS_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "term": keyword,
+        "country": "us",
+        "language": "en"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            logging.info(f"Grepwords API request for '{keyword}': URL: {url}, Headers: {headers}, Payload: {payload}")
+            data = await response.json()
+            logging.info(f"Grepwords API response for '{keyword}': {json.dumps(data, indent=2)}")
+            
+            if response.status == 200 and data and 'data' in data:
+                volume = data['data'].get('volume', 0)
+                logging.info(f"Search volume for '{keyword}': {volume}")
+                return volume
+            else:
+                logging.warning(f"No search volume data found for '{keyword}'. Status: {response.status}, Response: {data}")
+                return 0
+
+async def update_search_volume(keyword_id, keyword):
+    conn = sqlite3.connect('seo_rank_tracker.db')
+    c = conn.cursor()
+    
+    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword_id,))
+    result = c.fetchone()
+    search_volume, last_update = result if result else (None, None)
+    
+    current_time = datetime.now()
+    should_update = (
+        search_volume is None or 
+        last_update is None or 
+        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+    )
+    
+    if should_update:
+        volume = await fetch_search_volume(keyword)
+        c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
+                  (volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+        conn.commit()
+        logging.info(f"Updated search volume for keyword '{keyword}' (ID: {keyword_id}): {volume}")
+    else:
+        logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
+    
+    conn.close()
+
+@app.post("/api/share-of-voice/{project_id}", response_model=ShareOfVoiceResponse)
+async def get_share_of_voice(
+    project_id: int, 
+    request: ShareOfVoiceRequest
+):
+    try:
+        start_date = request.date_range.start
+        end_date = request.date_range.end
+        tag_id = request.tag_id
+
+        logging.info(f"Fetching Share of Voice for Project ID {project_id} from {start_date} to {end_date} with Tag ID {tag_id}")
+
+        serp_data = get_serp_data_within_date_range(project_id, start_date, end_date, tag_id)
+        logging.info(f"Fetched SERP data: {serp_data}")
+
+        if not serp_data:
+            raise HTTPException(status_code=404, detail="No SERP data found for the given criteria.")
+
+        # Calculate Share of Voice (SOV)
+        daily_sov = defaultdict(lambda: defaultdict(float))
+        total_search_volume = defaultdict(float)
+        all_domains = set()
+
+        for entry in serp_data:
+            date = entry['date'].split(' ')[0]  # Extract date
+            rank = entry['rank']
+            search_volume = entry['search_volume'] or 0
+
+            # Only consider ranks 1-10 for SOV calculation
+            if rank and 1 <= rank <= 10:
+                # Parse the full_data to get all domains in top 10
+                full_data = json.loads(entry['full_data'])
+                for result in full_data.get('organic_results', [])[:10]:
+                    domain = result.get('domain')
+                    if domain:
+                        all_domains.add(domain)
+                        position = result.get('position')
+                        if position and 1 <= position <= 10:
+                            sov_score = (11 - position) / 55  # Example SOV calculation
+                            daily_sov[date][domain] += sov_score * search_volume
+                
+                total_search_volume[date] += search_volume
+
+        if not daily_sov:
+            raise HTTPException(status_code=404, detail="No Share of Voice data available for the given criteria.")
+
+        # Normalize SOV scores
+        for date in daily_sov:
+            if total_search_volume[date] > 0:
+                for domain in daily_sov[date]:
+                    daily_sov[date][domain] = (daily_sov[date][domain] / total_search_volume[date]) * 100
+
+        # Prepare data for line chart
+        line_chart_data = [
+            LineChartData(
+                name=domain,
+                dates=sorted(daily_sov.keys()),
+                shares=[daily_sov[date].get(domain, 0) for date in sorted(daily_sov.keys())]
+            )
+            for domain in all_domains
+        ]
+
+        # Prepare data for donut chart (most recent date)
+        most_recent_date = max(daily_sov.keys())
+        donut_chart_data = [
+            DonutChartData(
+                name=domain, 
+                share=daily_sov[most_recent_date].get(domain, 0)
+            )
+            for domain in all_domains
+        ]
+
+        logging.info(f"Returning Share of Voice data with {len(line_chart_data)} domains for line chart and {len(donut_chart_data)} domains for donut chart.")
+        logging.info(f"Daily SOV: {dict(daily_sov)}")
+        logging.info(f"Total Search Volume: {dict(total_search_volume)}")
+
+        return ShareOfVoiceResponse(
+            lineChartData=line_chart_data,
+            donutChartData=donut_chart_data
+        )
+    except Exception as e:
+        logging.exception("An error occurred while processing Share of Voice request")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Pydantic models
+
+class SchedulePullRequest(BaseModel):
+    project_id: int
+    tag_id: Optional[int] = None
+    frequency: str
+
+    @validator('frequency', allow_reuse=True)
+    def validate_frequency(cls, v):
+        if v not in ['daily', 'weekly', 'monthly', 'test']:
+            raise ValueError('Invalid frequency')
+        return v
+
+class ScheduledPull(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    tag_id: Optional[int]
+    tag_name: Optional[str]
+    frequency: str
+    last_run: Optional[str]
+    next_pull: str
+
+async def fetch_and_update_rankings(conn, project, keyword, tag):
+    try:
+        logging.info(f"Fetching and updating rankings for keyword: {keyword['keyword']}, project: {project['name']}, tag: {tag['name'] if tag else 'None'}")
+        
+        # Fetch SERP data for the keyword
+        serp_data = await fetch_serp_data(keyword['keyword'])
+        
+        if serp_data:
+            # Parse SERP data and find the ranking for the project's domain
+            project_domain = project['domain']
+            ranking = next((result['position'] for result in serp_data.get('organic_results', []) if project_domain in result.get('domain', '')), None)
+            
+            # Update the serp_data table in the database
+            c = conn.cursor()
+            current_time = datetime.now().isoformat()
+            c.execute("""
+                INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume)
+                VALUES (?, ?, ?, ?, ?)
+            """, (keyword['id'], current_time, ranking, json.dumps(serp_data), keyword['search_volume']))
+            conn.commit()
+            
+            logging.info(f"Updated ranking for keyword '{keyword['keyword']}': {ranking}")
+        else:
+            logging.warning(f"No SERP data found for keyword: {keyword['keyword']}")
+    except Exception as e:
+        logging.error(f"Error in fetch_and_update_rankings for keyword '{keyword['keyword']}': {e}")
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
