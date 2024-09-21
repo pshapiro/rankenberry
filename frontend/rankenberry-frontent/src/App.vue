@@ -24,6 +24,7 @@ watch(() => route.meta.title, (newTitle) => {
           <router-link to="/" class="navbar-item">Home / Rank Table</router-link>
           <router-link to="/add" class="navbar-item">Add Project/Keywords</router-link>
           <router-link to="/keyword-management" class="navbar-item">Keyword Management</router-link>
+          <router-link to="/schedule-pull" class="navbar-item">Schedule</router-link>
         </div>
       </div>
     </nav>
