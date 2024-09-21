@@ -102,9 +102,20 @@ const fetchShareOfVoiceData = async () => {
 
       lineChartData.value = response.lineChartData;
       donutChartData.value = response.donutChartData;
-      showCharts.value = true;
-      await nextTick();
-      setTimeout(createCharts, 100); // Add a small delay before creating charts
+
+      // Log the data to check for zero values
+      console.log('Line Chart Data:', lineChartData.value);
+      console.log('Donut Chart Data:', donutChartData.value);
+
+      // Check if all values are zero
+      const allZero = lineChartData.value.every(item => item.shares.every(share => share === 0));
+      if (allZero) {
+        error.value = 'All share values are zero. Please check the data or date range.';
+      } else {
+        showCharts.value = true;
+        await nextTick();
+        setTimeout(createCharts, 100);
+      }
     } catch (err) {
       console.error('Error fetching Share of Voice data:', err);
       error.value = 'Failed to fetch Share of Voice data. Please try again.';
@@ -148,13 +159,17 @@ const createCharts = () => {
     name: domain.name,
   }));
 
+  console.log('Traces for chart:', traces);
+
   const layout = {
     title: 'Share of Voice Over Time',
     barmode: 'stack',
     xaxis: { title: 'Date' },
     yaxis: { title: 'Share of Voice (%)', range: [0, 100] },
     autosize: true,
-    margin: { l: 50, r: 50, b: 50, t: 50, pad: 4 }
+    margin: { l: 50, r: 50, b: 100, t: 50, pad: 4 },
+    bargap: 0.1,  // Adjust this value to control gap between bar groups
+    bargroupgap: 0.05  // Adjust this value to control gap between bars in a group
   };
 
   const config = {
@@ -190,12 +205,6 @@ onMounted(() => {
   if (props.projectId) {
     fetchShareOfVoiceData();
   }
-  window.addEventListener('resize', () => {
-    if (stackedBarChart.value && donutChart.value) {
-      Plotly.Plots.resize(stackedBarChart.value);
-      Plotly.Plots.resize(donutChart.value);
-    }
-  });
 });
 
 console.log('Plotly object:', Plotly);

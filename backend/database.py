@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 import logging
 import json
+from dateutil import parser
 
 def get_db_connection():
     conn = sqlite3.connect('seo_rank_tracker.db')
@@ -78,10 +79,13 @@ def add_serp_data(keyword_id, serp_data, search_volume):
     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
     rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
     full_data = json.dumps(serp_data)
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    current_time = datetime.now().isoformat()
     
     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
               (keyword_id, current_time, rank, full_data, search_volume))
+    
+    c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
+              (search_volume, current_time, keyword_id))
     
     conn.commit()
     conn.close()
@@ -157,7 +161,7 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
 
     return [
         {
-            'date': row['date'],
+            'date': parser.parse(row['date']).date().isoformat(),
             'rank': row['rank'],
             'search_volume': row['search_volume'],
             'domain': row['domain'],

@@ -24,6 +24,9 @@ from collections import defaultdict
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
 import atexit
+from datetime import datetime
+from urllib.parse import urlparse
+from dateutil import parser
 
 load_dotenv()
 
@@ -145,6 +148,13 @@ GREPWORDS_API_KEY = os.getenv("GREPWORDS_API_KEY")
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
+def extract_domain(url):
+    from urllib.parse import urlparse
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc or parsed_url.path
+    domain = domain.split(':')[0]  # Remove port if present
+    return domain.lower().replace('www.', '')
+
 @app.get("/api/projects")
 async def get_projects():
     conn = get_db_connection()
@@ -205,11 +215,23 @@ async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)
             conn.close()
 
             current_time = datetime.now()
-            should_update_volume = (
-                current_search_volume is None or 
-                last_update is None or 
-                (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
-            )
+            should_update_volume = True
+
+            if last_update:
+                try:
+                    # Try parsing with the old format
+                    last_update_dt = datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    try:
+                        # Try parsing with the new format
+                        last_update_dt = datetime.fromisoformat(last_update)
+                    except ValueError:
+                        # If both fail, set should_update_volume to True
+                        should_update_volume = True
+                    else:
+                        should_update_volume = (current_time - last_update_dt).days > 30
+                else:
+                    should_update_volume = (current_time - last_update_dt).days > 30
 
             if should_update_volume:
                 search_volume = await fetch_search_volume(keyword['keyword'])
@@ -349,18 +371,34 @@ async def fetch_serp_data(keyword):
 def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
     c = conn.cursor()
-    project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
-    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
+    # Fetch and normalize project_domain
+    project_domain = c.execute("""
+        SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)
+    """, (keyword_id,)).fetchone()[0]
+    project_domain = extract_domain('http://' + project_domain)
+
+    rank = -1
+    for item in serp_data.get('organic_results', []):
+        link = item.get('link', '')
+        result_domain = extract_domain(link)
+        if project_domain == result_domain:
+            rank = item.get('position')
+            break
+
+    # Log domains for debugging
+    logging.info(f"Project domain: {project_domain}")
+    logging.info(f"Matched rank: {rank}")
+
     full_data = json.dumps(serp_data)
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+    current_time = datetime.now().isoformat()
+
     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
               (keyword_id, current_time, rank, full_data, search_volume))
-    
+
     # Update the search_volume and last_volume_update in the keywords table
     c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
               (search_volume, current_time, keyword_id))
-    
+
     conn.commit()
     conn.close()
 
@@ -789,18 +827,9 @@ async def perform_pull(pull_id: int):
             project_id = pull['project_id']
             tag_id = pull['tag_id']
             frequency = pull['frequency']
-            last_run = datetime.fromisoformat(pull['last_run']) if pull['last_run'] else None
-            next_pull = datetime.fromisoformat(pull['next_pull'])
             current_time = datetime.now()
             
-            # Check if we missed any pulls
-            while next_pull < current_time:
-                logging.warning(f"Missed pull for ID: {pull_id}, scheduled at {next_pull}")
-                await update_project_rankings(project_id, tag_id)
-                last_run = next_pull
-                next_pull = calculate_next_pull(frequency, last_run)
-            
-            # Perform the current pull
+            # Perform the current pull, regardless of missed pulls
             await update_project_rankings(project_id, tag_id)
             
             # Update last_run and next_pull in the database
@@ -874,26 +903,20 @@ async def update_project_rankings(project_id: int, tag_id: Optional[int]):
         project = c.fetchone()
         
         if project:
-            # Fetch the tag details if tag_id is provided
-            if tag_id:
-                c.execute("SELECT * FROM tags WHERE id = ?", (tag_id,))
-                tag = c.fetchone()
-                if not tag:
-                    logging.warning(f"Tag with ID {tag_id} not found")
-                    return
-            else:
-                tag = None
-            
+            logging.info(f"Project details: {project}")
             # Fetch keywords for the project (and tag if provided)
             if tag_id:
-                c.execute("SELECT * FROM keywords WHERE project_id = ? AND tag_id = ?", (project_id, tag_id))
+                c.execute("SELECT * FROM keywords WHERE project_id = ? AND id IN (SELECT keyword_id FROM keyword_tags WHERE tag_id = ?)", (project_id, tag_id))
             else:
                 c.execute("SELECT * FROM keywords WHERE project_id = ?", (project_id,))
             keywords = c.fetchall()
             
+            logging.info(f"Found {len(keywords)} keywords for project")
+            
             # Fetch and update rankings for each keyword
             for keyword in keywords:
-                await fetch_and_update_rankings(conn, project, keyword, tag)
+                logging.info(f"Updating rankings for keyword: {keyword['keyword']}")
+                await fetch_and_update_rankings(conn, project, keyword, tag_id)
             
             logging.info(f"Completed update_project_rankings for project_id: {project_id}, tag_id: {tag_id}")
         else:
@@ -902,7 +925,6 @@ async def update_project_rankings(project_id: int, tag_id: Optional[int]):
         conn.close()
     except Exception as e:
         logging.error(f"Error in update_project_rankings for project_id: {project_id}, tag_id: {tag_id}: {e}")
-
 @app.post("/api/schedule-rank-pull", response_model=ScheduledPull)
 async def schedule_rank_pull(pull: SchedulePullRequest):
     try:
@@ -1105,7 +1127,7 @@ async def get_share_of_voice(
         all_domains = set()
 
         for entry in serp_data:
-            date = entry['date'].split(' ')[0]  # Extract date
+            date = parser.parse(entry['date']).date().isoformat()
             rank = entry['rank']
             search_volume = entry['search_volume'] or 0
 
@@ -1121,6 +1143,10 @@ async def get_share_of_voice(
                         if position and 1 <= position <= 10:
                             sov_score = (11 - position) / 55  # Example SOV calculation
                             daily_sov[date][domain] += sov_score * search_volume
+                        if total_search_volume[date] > 0:
+                            daily_sov[date][domain] += sov_score * search_volume / total_search_volume[date]
+                        else:
+                            daily_sov[date][domain] += sov_score
                 
                 total_search_volume[date] += search_volume
 
@@ -1132,6 +1158,11 @@ async def get_share_of_voice(
             if total_search_volume[date] > 0:
                 for domain in daily_sov[date]:
                     daily_sov[date][domain] = (daily_sov[date][domain] / total_search_volume[date]) * 100
+            else:
+                logging.warning(f"Total search volume for date {date} is 0, skipping normalization")
+
+        # Log the daily_sov for debugging
+        logging.info(f"Daily SOV: {dict(daily_sov)}")
 
         # Prepare data for line chart
         line_chart_data = [
@@ -1145,6 +1176,9 @@ async def get_share_of_voice(
 
         # Prepare data for donut chart (most recent date)
         most_recent_date = max(daily_sov.keys())
+        logging.info(f"Most recent date: {most_recent_date}")
+        logging.info(f"SOV for most recent date: {daily_sov[most_recent_date]}")
+        
         donut_chart_data = [
             DonutChartData(
                 name=domain, 
@@ -1154,8 +1188,6 @@ async def get_share_of_voice(
         ]
 
         logging.info(f"Returning Share of Voice data with {len(line_chart_data)} domains for line chart and {len(donut_chart_data)} domains for donut chart.")
-        logging.info(f"Daily SOV: {dict(daily_sov)}")
-        logging.info(f"Total Search Volume: {dict(total_search_volume)}")
 
         return ShareOfVoiceResponse(
             lineChartData=line_chart_data,
@@ -1164,7 +1196,6 @@ async def get_share_of_voice(
     except Exception as e:
         logging.exception("An error occurred while processing Share of Voice request")
         raise HTTPException(status_code=500, detail=str(e))
-
 # Pydantic models
 
 class SchedulePullRequest(BaseModel):
@@ -1188,28 +1219,46 @@ class ScheduledPull(BaseModel):
     last_run: Optional[str]
     next_pull: str
 
-async def fetch_and_update_rankings(conn, project, keyword, tag):
+async def fetch_and_update_rankings(conn, project, keyword, tag_id):
     try:
-        logging.info(f"Fetching and updating rankings for keyword: {keyword['keyword']}, project: {project['name']}, tag: {tag['name'] if tag else 'None'}")
+        # Check if the keyword has been updated recently (e.g., within the last hour)
+        c = conn.cursor()
+        c.execute("SELECT date FROM serp_data WHERE keyword_id = ? ORDER BY date DESC LIMIT 1", (keyword['id'],))
+        last_update = c.fetchone()
         
-        # Fetch SERP data for the keyword
+        if last_update:
+            last_update_time = datetime.fromisoformat(last_update[0])
+            if (datetime.now() - last_update_time).total_seconds() < 3600:  # 1 hour
+                logging.info(f"Skipping update for keyword '{keyword['keyword']}': updated recently")
+                return
+
         serp_data = await fetch_serp_data(keyword['keyword'])
         
         if serp_data:
-            # Parse SERP data and find the ranking for the project's domain
-            project_domain = project['domain']
-            ranking = next((result['position'] for result in serp_data.get('organic_results', []) if project_domain in result.get('domain', '')), None)
+            project_domain = extract_domain(project['domain'])
+            ranking = -1
+            for item in serp_data.get('organic_results', []):
+                result_domain = extract_domain(item.get('link', ''))
+                if project_domain == result_domain:
+                    ranking = item.get('position', -1)
+                    break
+
+            search_volume = await fetch_search_volume(keyword['keyword'])
             
-            # Update the serp_data table in the database
-            c = conn.cursor()
             current_time = datetime.now().isoformat()
+            c = conn.cursor()
             c.execute("""
                 INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume)
                 VALUES (?, ?, ?, ?, ?)
-            """, (keyword['id'], current_time, ranking, json.dumps(serp_data), keyword['search_volume']))
+            """, (keyword['id'], current_time, ranking, json.dumps(serp_data), search_volume))
             conn.commit()
             
-            logging.info(f"Updated ranking for keyword '{keyword['keyword']}': {ranking}")
+            # Update the keywords table with the new search volume
+            c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
+                      (search_volume, current_time, keyword['id']))
+            conn.commit()
+            
+            logging.info(f"Updated ranking for keyword '{keyword['keyword']}': {ranking} (Project domain: {project_domain})")
         else:
             logging.warning(f"No SERP data found for keyword: {keyword['keyword']}")
     except Exception as e:
