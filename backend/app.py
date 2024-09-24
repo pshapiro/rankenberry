@@ -328,7 +328,7 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
         should_update_volume = (
             keyword['search_volume'] is None or 
             keyword['last_volume_update'] is None or 
-            (current_time - datetime.strptime(keyword['last_volume_update'], "%Y-%m-%d %H:%M:%S")).days > 30
+            (current_time - datetime.fromisoformat(keyword['last_volume_update'])).days > 30
         )
 
         serp_data = await fetch_serp_data(keyword['keyword'])
@@ -684,7 +684,7 @@ async def update_search_volume(keyword_id, keyword):
     should_update = (
         search_volume is None or 
         last_update is None or 
-        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+        (current_time - datetime.fromisoformat(last_update)).days > 30
     )
     
     if should_update:
@@ -1089,7 +1089,7 @@ async def update_search_volume(keyword_id, keyword):
     should_update = (
         search_volume is None or 
         last_update is None or 
-        (current_time - datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")).days > 30
+        (current_time - datetime.fromisoformat(last_update)).days > 30
     )
     
     if should_update:
