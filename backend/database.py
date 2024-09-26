@@ -4,21 +4,46 @@ from datetime import datetime
 import logging
 import json
 from dateutil import parser
+import os
+
+# Determine the absolute path to the directory containing this file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'seo_rank_tracker.db')
 
 def get_db_connection():
-    conn = sqlite3.connect('seo_rank_tracker.db')
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    conn = sqlite3.connect('seo_rank_tracker.db')
+    conn = get_db_connection()
     c = conn.cursor()
+
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_domains
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER,
+                  domain TEXT NOT NULL,
+                  project_id INTEGER,
+                  FOREIGN KEY (user_id) REFERENCES users (id),
+                  FOREIGN KEY (project_id) REFERENCES projects (id))''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  domain_id INTEGER,
+                  keyword TEXT NOT NULL,
+                  date TEXT NOT NULL,
+                  clicks INTEGER,
+                  impressions INTEGER,
+                  ctr REAL,
+                  FOREIGN KEY (domain_id) REFERENCES gsc_domains (id))''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS projects
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   name TEXT NOT NULL,
                   domain TEXT NOT NULL,
-                  active INTEGER DEFAULT 1)''')
+                  active INTEGER DEFAULT 1,
+                  user_id INTEGER,
+                  FOREIGN KEY (user_id) REFERENCES users (id))''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS keywords
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,12 +69,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_project(name, domain):
-    logging.info(f"Adding project to database: {name}, {domain}")
+def add_project(name, domain, user_id):
+    logging.info(f"Adding project to database: {name}, {domain}, user_id: {user_id}")
     try:
         conn = sqlite3.connect('seo_rank_tracker.db')
         c = conn.cursor()
-        c.execute("INSERT INTO projects (name, domain) VALUES (?, ?)", (name, domain))
+        c.execute("INSERT INTO projects (name, domain, user_id) VALUES (?, ?, ?)", (name, domain, user_id))
         project_id = c.lastrowid
         conn.commit()
         logging.info(f"Project added successfully with ID: {project_id}")
@@ -73,6 +98,14 @@ def add_keyword(project_id, keyword):
     conn.close()
     return keyword_id
 
+def get_domain_by_id(domain_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT domain FROM gsc_domains WHERE id = ?", (domain_id,))
+    result = c.fetchone()
+    conn.close()
+    return result['domain'] if result else None
+
 def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
     c = conn.cursor()
@@ -90,10 +123,10 @@ def add_serp_data(keyword_id, serp_data, search_volume):
     conn.commit()
     conn.close()
 
-def get_projects():
-    conn = sqlite3.connect('seo_rank_tracker.db')
+def get_projects(user_id):
+    conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT id, name, domain, COALESCE(active, 1) as active FROM projects")
+    c.execute("SELECT id, name, domain, COALESCE(active, 1) as active FROM projects WHERE user_id = ?", (user_id,))
     projects = c.fetchall()
     conn.close()
     return [{"id": p[0], "name": p[1], "domain": p[2], "active": bool(p[3])} for p in projects]
@@ -137,6 +170,45 @@ def delete_keywords_by_project(project_id):
     c.execute("DELETE FROM keywords WHERE project_id = ?", (project_id,))
     conn.commit()
     conn.close()
+
+def add_gsc_domain(user_id, domain, project_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("INSERT INTO gsc_domains (user_id, domain, project_id) VALUES (?, ?, ?)", (user_id, domain, project_id))
+    domain_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return domain_id
+
+def add_gsc_data(domain_id, keyword, date, clicks, impressions, ctr):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO gsc_data (domain_id, keyword, date, clicks, impressions, ctr)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (domain_id, keyword, date, clicks, impressions, ctr))
+    conn.commit()
+    conn.close()
+
+def get_gsc_domains(user_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT id, domain FROM gsc_domains WHERE user_id = ?", (user_id,))
+    domains = c.fetchall()
+    conn.close()
+    return [{"id": d[0], "domain": d[1]} for d in domains]
+
+def get_gsc_data(domain_id, start_date, end_date):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT keyword, date, clicks, impressions, ctr
+        FROM gsc_data
+        WHERE domain_id = ? AND date BETWEEN ? AND ?
+    """, (domain_id, start_date, end_date))
+    data = c.fetchall()
+    conn.close()
+    return [{"keyword": d[0], "date": d[1], "clicks": d[2], "impressions": d[3], "ctr": d[4]} for d in data]
 
 def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=None):
     conn = get_db_connection()
