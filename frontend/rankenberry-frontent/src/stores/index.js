@@ -71,7 +71,11 @@ export const useMainStore = defineStore('main', {
     async fetchRankData() {
       try {
         const response = await axios.get(`${API_URL}/rankData`)
-        this.rankData = response.data
+        console.log('Received rank data:', response.data)
+        this.rankData = response.data.map(item => ({
+          ...item,
+          date: item.date ? new Date(item.date).toISOString() : null
+        }))
       } catch (error) {
         console.error('Error fetching rank data:', error)
         throw error
@@ -88,6 +92,7 @@ export const useMainStore = defineStore('main', {
         throw error;
       }
     },
+    
     async fetchSerpDataByTag(tagId) {
       try {
         const response = await axios.post(`${API_URL}/fetch-serp-data-by-tag/${tagId}`)
@@ -360,17 +365,19 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    fetchGscData: async (projectId, startDate, endDate) => {
-      try {
-        const response = await axios.get(`/api/gsc-data/${projectId}`, {
-          params: { start_date: startDate, end_date: endDate }
-        })
-        return response.data
-      } catch (error) {
-        console.error('Error fetching GSC data:', error)
-        throw error
+  fetchGscData: async (projectId, startDate, endDate) => {
+    try {
+      const params = { start_date: startDate, end_date: endDate };
+      if (projectId) {
+        params.project_id = projectId;
       }
-    },
+      const response = await axios.get(`${API_URL}/gsc-data`, { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching GSC data:', error);
+      throw error;
+    }
+  },
 
     async fetchCombinedData(projectId, startDate, endDate) {
       try {

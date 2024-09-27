@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import aiohttp
 from database import (
     init_db,
-    add_serp_data,
+    # add_serp_data,
     get_keywords,
     get_all_keywords,
     delete_keyword_by_id,
@@ -25,10 +25,12 @@ from database import (
     backfill_gsc_data,
     update_gsc_credentials_in_db,
     get_gsc_credentials_from_db,
-    create_gsc_data_table
+    create_gsc_data_table,
+    add_gsc_data_by_keyword_id,
+    update_search_volume_if_needed
 )
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Union
 import asyncio
 from asyncio import Semaphore
@@ -242,7 +244,7 @@ async def perform_pull(pull_id: int):
             project_id = pull['project_id']
             tag_id = pull['tag_id']
             frequency = pull['frequency']
-            current_time = datetime.now()
+            current_time = datetime.now(timezone.utc)
             
             # Perform the current pull, regardless of missed pulls
             await update_project_rankings(project_id, tag_id)
@@ -289,7 +291,7 @@ async def reschedule_pull(pull_id: int):
 
 def calculate_next_pull(frequency: str, start_time: Optional[datetime] = None) -> datetime:
     if start_time is None:
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
     if frequency == 'daily':
         next_pull = start_time + timedelta(days=1)
     elif frequency == 'weekly':
@@ -300,7 +302,7 @@ def calculate_next_pull(frequency: str, start_time: Optional[datetime] = None) -
         if next_month > 12:
             next_month = 1
             next_year += 1
-        next_pull = datetime(next_year, next_month, start_time.day, start_time.hour, start_time.minute)
+        next_pull = datetime(next_year, next_month, start_time.day, start_time.hour, start_time.minute, tzinfo=timezone.utc)
     elif frequency == 'test':
         next_pull = start_time + timedelta(minutes=1)  # For testing purposes
     else:
@@ -359,8 +361,8 @@ def initialize_scheduled_pulls():
     conn.close()
 
     for pull in scheduled_pulls:
-        next_pull = datetime.fromisoformat(pull['next_pull'])
-        if next_pull < datetime.now():
+        next_pull = datetime.fromisoformat(pull['next_pull']).replace(tzinfo=timezone.utc)
+        if next_pull < datetime.now(timezone.utc):
             next_pull = calculate_next_pull(pull['frequency'])
 
         scheduler.add_job(
@@ -469,22 +471,6 @@ async def gsc_oauth2callback(state: str, code: str):
     except Exception as e:
         logging.exception("An error occurred during the OAuth callback.")
         raise HTTPException(status_code=500, detail=str(e))
-    
-@app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: Optional[SerpDataRequest] = None):
-    # Fetch SERP data
-    serp_data = await fetch_serp_data_for_project(project_id, request)
-    
-    # Fetch GSC data
-    gsc_data = await fetch_gsc_data_for_project(project_id, request)
-    
-    # Combine the data
-    combined_data = {
-        "serp_data": serp_data,
-        "gsc_data": gsc_data
-    }
-    
-    return combined_data
 
 @app.post("/api/schedule-rank-pull", response_model=ScheduledPull)
 async def schedule_rank_pull(pull: SchedulePullRequest):
@@ -646,17 +632,17 @@ async def update_search_volume(keyword_id, keyword):
     result = c.fetchone()
     search_volume, last_update = result if result else (None, None)
     
-    current_time = datetime.now()
+    current_time = datetime.now(timezone.utc)
     should_update = (
         search_volume is None or 
         last_update is None or 
-        (current_time - datetime.fromisoformat(last_update)).days > 30
+        (current_time - datetime.fromisoformat(last_update).replace(tzinfo=timezone.utc)).days > 30
     )
     
     if should_update:
         volume = await fetch_search_volume(keyword)
         c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
-                    (volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+                    (volume, current_time.isoformat(), keyword_id))
         conn.commit()
         logging.info(f"Updated search volume for keyword '{keyword}' (ID: {keyword_id}): {volume}")
     else:
@@ -734,60 +720,95 @@ async def create_gsc_domain(domain: GSCDomain):
         
 async def fetch_gsc_data_for_project(project_id: int, request: Optional[SerpDataRequest] = None):
     logging.info(f"Fetching GSC data for project_id: {project_id}")
-    
+
     # Get the GSC domain for this project
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT domain FROM gsc_domains WHERE project_id = ?", (project_id,))
     domain_result = c.fetchone()
-    conn.close()
-    
+
     if not domain_result:
         logging.warning(f"No GSC domain found for project_id: {project_id}")
-        return []
-    
+        return
+
     domain = domain_result[0]
-    
+
     # Use the date range from the request, or default to last 7 days
-    end_date = datetime.now().date()
+    end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=7)
     if request and hasattr(request, 'start_date') and hasattr(request, 'end_date'):
         start_date = datetime.strptime(request.start_date, "%Y-%m-%d").date()
         end_date = datetime.strptime(request.end_date, "%Y-%m-%d").date()
-    
+
     logging.info(f"Fetching GSC data for domain: {domain}, start_date: {start_date}, end_date: {end_date}")
-    
-    gsc_data = await fetch_gsc_data(project_id, domain, start_date, end_date)
-    
-    # Add the fetched data to the database
-    for row in gsc_data:
-        keyword = row['keys'][0]
-        date = row['keys'][1]
-        add_gsc_data(project_id, keyword, date, row['clicks'], row['impressions'], row['ctr'], row['position'])
-    
-    return gsc_data
+
+    # Get the keywords being tracked
+    c.execute("SELECT id, keyword FROM keywords WHERE project_id = ?", (project_id,))
+    keywords = c.fetchall()
+    conn.close()
+
+    if not keywords:
+        logging.info(f"No keywords found for project_id: {project_id}")
+        return
+
+    # Prepare the credentials and GSC service
+    credentials_json = get_gsc_credentials_from_db(project_id)
+    if not credentials_json:
+        logging.error(f"No GSC credentials found for project_id: {project_id}")
+        return
+
+    credentials = Credentials.from_authorized_user_info(json.loads(credentials_json), SCOPES)
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        # Save the refreshed credentials back to the database
+        update_gsc_credentials_in_db(project_id, credentials.to_json())
+
+    service = build('webmasters', 'v3', credentials=credentials)
+    site_url = domain
+
+    # Fetch GSC data for each keyword
+    for keyword_row in keywords:
+        keyword_id = keyword_row['id']
+        keyword = keyword_row['keyword']
+
+        # Fetch data for the keyword
+        body = {
+            'startDate': start_date.strftime("%Y-%m-%d"),
+            'endDate': end_date.strftime("%Y-%m-%d"),
+            'dimensions': ['date'],
+            'dimensionFilterGroups': [{
+                'filters': [{
+                    'dimension': 'query',
+                    'operator': 'equals',
+                    'expression': keyword
+                }]
+            }],
+            'rowLimit': 1000
+        }
+
+        try:
+            response = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+            if 'rows' in response:
+                for row in response['rows']:
+                    date = row['keys'][0]  # Date is the key
+                    clicks = row.get('clicks', 0)
+                    impressions = row.get('impressions', 0)
+                    ctr = row.get('ctr', 0)
+                    position = row.get('position', 0)
+                    # Store the data in the database
+                    add_gsc_data(keyword_id, date, clicks, impressions, ctr, position)
+            else:
+                logging.info(f"No GSC data for keyword: {keyword}")
+        except Exception as e:
+            logging.error(f"Error fetching GSC data for keyword '{keyword}': {str(e)}")
+            continue
+
+    logging.info(f"GSC data fetched and stored successfully for project_id: {project_id}")
 
 @app.get("/api/gsc/data")
 async def get_gsc_data_endpoint(domain_id: int, start_date: str, end_date: str):
     data = get_gsc_data(domain_id, start_date, end_date)
     return data
-
-# Modify the existing fetch_serp_data function to also fetch GSC data
-@app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
-    # Fetch SERP data
-    serp_data = await fetch_serp_data_for_project(project_id, request)
-    
-    # Fetch GSC data
-    gsc_data = await fetch_gsc_data_for_project(project_id, request)
-    
-    # Combine the data
-    combined_data = {
-        "serp_data": serp_data,
-        "gsc_data": gsc_data
-    }
-    
-    return combined_data
 
 @app.get("/api/projects")
 async def get_projects():
@@ -798,11 +819,6 @@ async def get_projects():
     finally:
         conn.close()
     return [dict(project) for project in projects]
-
-# @app.post("/api/projects", response_model=Project)
-# async def create_project(project: ProjectBase, user_id: int = Depends(get_current_user_id)):
-#     project_id = add_project(project.name, project.domain, user_id)
-#     return {"id": project_id, "user_id": user_id, **project.dict()}
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(project: ProjectBase):
@@ -833,81 +849,69 @@ async def create_keyword(project_id: int, keyword: KeywordBase):
 CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
+async def fetch_serp_data_endpoint(project_id: int, request: SerpDataRequest = Body(None)):
     tag_id = request.tag_id if request else None
     keywords = await get_keywords(project_id, tag_id)
     active_keywords = [kw for kw in keywords if kw['active']]
-    
+
     semaphore = Semaphore(CONCURRENT_REQUESTS)
-    
+
     async def fetch_and_store(keyword):
         async with semaphore:
             serp_data = await fetch_serp_data(keyword['keyword'])
-            gsc_data = await fetch_gsc_data_for_project(project_id, keyword['keyword'])            # Check if we need to update the search volume
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
-            result = c.fetchone()
-            search_volume, last_update = result if result else (None, None)
-            
-            current_time = datetime.now()
-            should_update = (
-                search_volume is None or 
-                last_update is None or 
-                (current_time - datetime.fromisoformat(last_update)).days > 30
-            )
-            
-            if should_update:
-                search_volume = await fetch_search_volume(keyword['keyword'])
-                c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
-                          (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword['id']))
-                conn.commit()
-            
-            add_serp_data(keyword['id'], serp_data, search_volume)
-            add_gsc_data(project_id, keyword['id'], gsc_data)
-            await backfill_gsc_data(project_id, keyword['id'], keyword['keyword'])
-            
-            conn.close()
-    
+            # Fetch GSC data for the keyword and store it
+            try:
+                await fetch_gsc_data_for_keyword(project_id, keyword)
+            except Exception as e:
+                logging.error(f"Error fetching GSC data for keyword {keyword['keyword']}: {e}")
+            # Update search volume if needed
+            await update_search_volume_if_needed(keyword)
+            add_serp_data(keyword['id'], serp_data, keyword['search_volume'])
+
     tasks = [fetch_and_store(keyword) for keyword in active_keywords]
     await asyncio.gather(*tasks)
-    
+
     return {"message": f"SERP and GSC data fetched and stored successfully for {len(active_keywords)} keywords"}
 
-@app.get("/api/gsc-data/{project_id}")
-async def get_gsc_data(project_id: int, start_date: str, end_date: str):
+@app.get("/api/gsc-data")
+async def get_gsc_data(project_id: Optional[int] = None, start_date: str = None, end_date: str = None):
     conn = get_db_connection()
     c = conn.cursor()
-    
-    # Get the domain for the project
-    c.execute("SELECT domain FROM projects WHERE id = ?", (project_id,))
-    domain = c.fetchone()[0]
-    
-    # Get the keywords for the project
-    c.execute("SELECT id, keyword FROM keywords WHERE project_id = ?", (project_id,))
-    keywords = c.fetchall()
-    
-    gsc_data = {}
-    for keyword_id, keyword in keywords:
-        c.execute("""
-            SELECT AVG(position) as avg_position, SUM(clicks) as total_clicks, 
-                   SUM(impressions) as total_impressions, AVG(ctr) as avg_ctr
-            FROM gsc_data
-            WHERE keyword_id = ? AND date BETWEEN ? AND ?
-            GROUP BY strftime('%W', date)
-        """, (keyword_id, start_date, end_date))
-        
-        result = c.fetchone()
-        if result:
-            gsc_data[keyword_id] = {
-                'avg_position': result[0],
-                'total_clicks': result[1],
-                'total_impressions': result[2],
-                'avg_ctr': result[3]
-            }
-    
+
+    # Set default dates if not provided
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    if not end_date:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+    # Get the keywords for the specified project or all projects
+    if project_id:
+        c.execute("SELECT id FROM keywords WHERE project_id = ?", (project_id,))
+    else:
+        c.execute("SELECT id FROM keywords")
+
+    keyword_ids = [row['id'] for row in c.fetchall()]
+
+    if not keyword_ids:
+        conn.close()
+        return []
+
+    placeholders = ','.join(['?'] * len(keyword_ids))
+    query = f"""
+        SELECT keyword_id, date, clicks, impressions, ctr, position
+        FROM gsc_data
+        WHERE keyword_id IN ({placeholders})
+          AND date BETWEEN ? AND ?
+    """
+    params = keyword_ids + [start_date, end_date]
+    c.execute(query, params)
+
+    data = c.fetchall()
     conn.close()
-    return gsc_data
+
+    # Convert data to list of dicts
+    result = [dict(row) for row in data]
+    return result
 
 @app.post("/api/fetch-serp-data-by-tag/{tag_id}")
 async def fetch_and_store_serp_data_by_tag(tag_id: int):
@@ -934,40 +938,6 @@ async def get_keywords(project_id: int, tag_id: Optional[int] = None):
     keywords = c.fetchall()
     conn.close()
     return [dict(zip(['id', 'project_id', 'keyword', 'active', 'search_volume', 'last_volume_update'], keyword)) for keyword in keywords]
-
-async def fetch_gsc_data(project_id, domain, start_date, end_date):
-    try:
-        # Retrieve GSC credentials from the database
-        credentials_json = get_gsc_credentials_from_db(project_id)
-        
-        if not credentials_json:
-            raise ValueError("No GSC credentials found for this project")
-        
-        credentials = Credentials.from_authorized_user_info(json.loads(credentials_json))
-        
-        if credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-            # Update the refreshed credentials in the database
-            update_gsc_credentials_in_db(project_id, credentials.to_json())
-        
-        service = build('searchconsole', 'v1', credentials=credentials)
-        
-        query = {
-            'startDate': start_date.strftime("%Y-%m-%d"),
-            'endDate': end_date.strftime("%Y-%m-%d"),
-            'dimensions': ['query', 'date'],
-            'rowLimit': 25000
-        }
-        
-        response = service.searchanalytics().query(siteUrl=domain, body=query).execute()
-        
-        return response.get('rows', [])
-    except ValueError as ve:
-        logging.error(f"GSC Credential Error: {str(ve)}")
-        raise HTTPException(status_code=500, detail=f"GSC Credential Error: {str(ve)}")
-    except Exception as e:
-        logging.error(f"Error fetching GSC data: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching GSC data: {str(e)}")
     
 async def get_keywords_by_tag(tag_id: int):
     conn = get_db_connection()
@@ -993,7 +963,7 @@ async def get_rank_data():
     ''').fetchall()
     conn.close()
     result = [dict(zip(['id', 'date', 'keyword', 'domain', 'rank', 'keyword_id', 'project_id', 'search_volume'], row)) for row in rank_data]
-    logging.info(f"Rank data: {result}")
+    logging.info(f"Rank data fetched from database: {result}")  # Added detailed logging
     return result
 
 @app.get("/api/serp-data/{serp_data_id}")
@@ -1022,11 +992,11 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
     conn.close()
     
     if keyword:
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         should_update_volume = (
             keyword['search_volume'] is None or 
             keyword['last_volume_update'] is None or 
-            (current_time - datetime.fromisoformat(keyword['last_volume_update'])).days > 30
+            (current_time - datetime.fromisoformat(keyword['last_volume_update']).replace(tzinfo=timezone.utc)).days > 30
         )
 
         serp_data = await fetch_serp_data(keyword['keyword'])
@@ -1036,7 +1006,7 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
             # Update the keywords table with the new search volume
             conn = get_db_connection()
             conn.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
-                         (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+                         (search_volume, current_time.isoformat(), keyword_id))
             conn.commit()
             conn.close()
         else:
@@ -1086,16 +1056,13 @@ def add_serp_data(keyword_id, serp_data, search_volume):
     # Log domains for debugging
     logging.info(f"Project domain: {project_domain}")
     logging.info(f"Matched rank: {rank}")
+    logging.info(f"Inserted SERP data for keyword_id: {keyword_id}, rank: {rank}")
 
     full_data = json.dumps(serp_data)
-    current_time = datetime.now().isoformat()
+    current_time = datetime.now(timezone.utc).isoformat()
 
     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
               (keyword_id, current_time, rank, full_data, search_volume))
-
-    # Update the search_volume and last_volume_update in the keywords table
-    c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
-              (search_volume, current_time, keyword_id))
 
     conn.commit()
     conn.close()
@@ -1378,17 +1345,17 @@ async def update_search_volume(keyword_id, keyword):
     result = c.fetchone()
     search_volume, last_update = result if result else (None, None)
     
-    current_time = datetime.now()
+    current_time = datetime.now(timezone.utc)
     should_update = (
         search_volume is None or 
         last_update is None or 
-        (current_time - datetime.fromisoformat(last_update)).days > 30
+        (current_time - datetime.fromisoformat(last_update).replace(tzinfo=timezone.utc)).days > 30
     )
     
     if should_update:
         volume = await fetch_search_volume(keyword)
         c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
-                  (volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword_id))
+                  (volume, current_time.isoformat(), keyword_id))
         conn.commit()
         logging.info(f"Updated search volume for keyword '{keyword}' (ID: {keyword_id}): {volume}")
     else:
@@ -1573,6 +1540,70 @@ async def get_gsc_domain(domain_id: int):
     except Exception as e:
         logging.error(f"Error retrieving GSC domain: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving GSC domain")
+    
+async def fetch_gsc_data_for_keyword(project_id, keyword):
+    try:
+        # Retrieve GSC credentials from the database
+        credentials_json = get_gsc_credentials_from_db(project_id)
+        if not credentials_json:
+            logging.warning(f"No GSC credentials found for project_id: {project_id}")
+            # If no credentials are found, we can simply return without raising an exception
+            return
+
+        # Load credentials and refresh if necessary
+        credentials = Credentials.from_authorized_user_info(json.loads(credentials_json), SCOPES)
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            # Save the refreshed credentials back to the database
+            update_gsc_credentials_in_db(project_id, credentials.to_json())
+
+        # Build the GSC service
+        service = build('webmasters', 'v3', credentials=credentials)
+
+        # Get the domain associated with the project
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT domain FROM gsc_domains WHERE project_id = ?", (project_id,))
+        result = c.fetchone()
+        if not result:
+            logging.warning(f"No GSC domain associated with project_id: {project_id}")
+            conn.close()
+            return
+        site_url = result[0]
+        conn.close()
+
+        # Use the date range, e.g., last 7 days
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=7)
+
+        body = {
+            'startDate': start_date.strftime("%Y-%m-%d"),
+            'endDate': end_date.strftime("%Y-%m-%d"),
+            'dimensions': ['date'],
+            'dimensionFilterGroups': [{
+                'filters': [{
+                    'dimension': 'query',
+                    'operator': 'equals',
+                    'expression': keyword['keyword']
+                }]
+            }],
+            'rowLimit': 1000
+        }
+
+        response = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+        if 'rows' in response:
+            for row in response['rows']:
+                date = row['keys'][0]  # Date is the key
+                clicks = row.get('clicks', 0)
+                impressions = row.get('impressions', 0)
+                ctr = row.get('ctr', 0)
+                position = row.get('position', 0)
+                # Store the data in the database
+                add_gsc_data_by_keyword_id(keyword['id'], date, clicks, impressions, ctr, position)
+        else:
+            logging.info(f"No GSC data for keyword: {keyword['keyword']}")
+    except Exception as e:
+        logging.error(f"Error fetching GSC data for keyword '{keyword['keyword']}': {str(e)}")
     
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

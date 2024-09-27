@@ -7,6 +7,7 @@ from dateutil import parser
 import os
 from fastapi import HTTPException
 from datetime import datetime, timedelta
+
 # Determine the absolute path to the directory containing this file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'seo_rank_tracker.db')
@@ -125,22 +126,22 @@ def get_domain_by_id(domain_id: int) -> str:
     else:
         raise HTTPException(status_code=404, detail="Domain not found")
     
-def add_serp_data(keyword_id, serp_data, search_volume):
-    conn = get_db_connection()
-    c = conn.cursor()
-    project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
-    rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
-    full_data = json.dumps(serp_data)
-    current_time = datetime.now().isoformat()
+# def add_serp_data(keyword_id, serp_data, search_volume):
+#     conn = get_db_connection()
+#     c = conn.cursor()
+#     project_domain = c.execute("SELECT domain FROM projects WHERE id = (SELECT project_id FROM keywords WHERE id = ?)", (keyword_id,)).fetchone()[0]
+#     rank = next((item['position'] for item in serp_data.get('organic_results', []) if project_domain in item.get('domain', '')), -1)
+#     full_data = json.dumps(serp_data)
+#     current_time = datetime.now().isoformat()
     
-    c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
-              (keyword_id, current_time, rank, full_data, search_volume))
+#     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
+#               (keyword_id, current_time, rank, full_data, search_volume))
     
-    c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
-              (search_volume, current_time, keyword_id))
+#     c.execute('UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?',
+#               (search_volume, current_time, keyword_id))
     
-    conn.commit()
-    conn.close()
+#     conn.commit()
+#     conn.close()
 
 def get_projects(user_id):
     conn = get_db_connection()
@@ -199,15 +200,22 @@ def add_gsc_domain(user_id, domain, project_id):
     conn.close()
     return domain_id
 
-def add_gsc_data(domain_id, keyword, date, clicks, impressions, ctr):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO gsc_data (domain_id, keyword, date, clicks, impressions, ctr)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (domain_id, keyword, date, clicks, impressions, ctr))
-    conn.commit()
-    conn.close()
+def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position):
+    # Only proceed if the keyword exists in the database
+    c.execute("SELECT id FROM keywords WHERE project_id = ? AND keyword = ?", (project_id, keyword))
+    result = c.fetchone()
+    if result:
+        keyword_id = result[0]
+        # Insert the GSC data
+        c.execute('''INSERT OR REPLACE INTO gsc_data 
+                     (keyword_id, date, clicks, impressions, ctr, position)
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (keyword_id, date, clicks, impressions, ctr, position))
+        conn.commit()
+        logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+    else:
+        # Keyword not being tracked; ignore
+        logging.info(f"Keyword '{keyword}' not found in project_id {project_id}. Skipping GSC data.")
 
 def get_gsc_domains(user_id):
     conn = get_db_connection()
@@ -346,3 +354,38 @@ async def backfill_gsc_data(project_id, keyword_id, keyword):
 
         gsc_data = await fetch_gsc_data(project_id, keyword, start_date, end_date)
         add_gsc_data(project_id, keyword_id, gsc_data)
+    
+def add_gsc_data_by_keyword_id(keyword_id, date, clicks, impressions, ctr, position):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO gsc_data 
+                 (keyword_id, date, clicks, impressions, ctr, position)
+                 VALUES (?, ?, ?, ?, ?, ?)''',
+              (keyword_id, date, clicks, impressions, ctr, position))
+    conn.commit()
+    conn.close()
+    logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+
+async def update_search_volume_if_needed(keyword):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
+    result = c.fetchone()
+    search_volume, last_update = result if result else (None, None)
+    
+    current_time = datetime.now()
+    should_update = (
+        search_volume is None or 
+        last_update is None or 
+        (current_time - datetime.fromisoformat(last_update)).days > 30
+    )
+    
+    if should_update:
+        search_volume = await fetch_search_volume(keyword['keyword'])
+        c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
+                  (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword['id']))
+        conn.commit()
+        keyword['search_volume'] = search_volume  # Update the keyword dictionary
+    else:
+        keyword['search_volume'] = search_volume
+    conn.close()

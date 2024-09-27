@@ -76,7 +76,8 @@
       </div>
     </div>
 
-    <table class="table is-fullwidth is-striped is-hoverable">
+
+    <table v-if="dataLoaded" class="table is-fullwidth is-striped is-hoverable">
       <thead>
         <tr>
           <th>Date</th>
@@ -140,19 +141,39 @@
             </span>
             <span v-else>-</span>
           </td>
-          
+
           <!-- GSC Avg Position -->
-          <td>{{ item.gscData ? item.gscData.avg_position.toFixed(2) : '-' }}</td>
-          
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ item.gscDataForDate.position.toFixed(2) }} ({{ formatDate(item.gscDataForDate.date) }})
+            </span>
+            <span v-else>-</span>
+          </td>
+
           <!-- GSC Clicks -->
-          <td>{{ item.gscData ? item.gscData.total_clicks : '-' }}</td>
-          
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ item.gscDataForDate.clicks }} ({{ formatDate(item.gscDataForDate.date) }})
+            </span>
+            <span v-else>-</span>
+          </td>
+
           <!-- GSC Impressions -->
-          <td>{{ item.gscData ? item.gscData.total_impressions : '-' }}</td>
-          
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ item.gscDataForDate.impressions }} ({{ formatDate(item.gscDataForDate.date) }})
+            </span>
+            <span v-else>-</span>
+          </td>
+
           <!-- GSC CTR -->
-          <td>{{ item.gscData ? (item.gscData.avg_ctr * 100).toFixed(2) + '%' : '-' }}</td>
-          
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ (item.gscDataForDate.ctr * 100).toFixed(2) }}% ({{ formatDate(item.gscDataForDate.date) }})
+            </span>
+            <span v-else>-</span>
+          </td>
+
           <!-- Actions -->
           <td>
             <div class="buttons">
@@ -181,9 +202,11 @@
           </td>
         </tr>
       </tbody>
-
     </table>
 
+    <div v-else class="has-text-centered">
+      <p>Loading data...</p>
+    </div>
     <!-- Pagination -->
     <nav class="pagination is-centered" role="navigation" aria-label="pagination">
       <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
@@ -250,12 +273,11 @@ import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
 import ShareOfVoiceChart from './ShareOfVoiceChart.vue'
-import Plotly from 'plotly.js-dist-min'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
-const selectedProject = ref('')
-const selectedTag = ref('')
+const selectedProject = ref(null)
+const selectedTag = ref(null)
 const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
@@ -264,18 +286,29 @@ const itemsPerPage = 10
 const isKeywordHistoryModalOpen = ref(false)
 const selectedKeywordId = ref(null)
 const keywordHistory = ref([])
-const dateRange = ref({ start: null, end: null })
+// const dateRange = ref({
+//   start: '',
+//   end: ''
+// })
+
+const dateRange = ref({
+  start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+  end: new Date().toISOString().split('T')[0],
+});
+
+console.log('Date Range:', dateRange.value);
 const isShareOfVoiceModalOpen = ref(false)
-const shareOfVoiceData = ref(null)
-const donutChartData = ref(null)
-const lineChart = ref(null)
-const donutChart = ref(null)
+const dataLoaded = ref(false) // New flag to indicate data loading status
+const gscDataMap = ref({})
+
 
 onMounted(async () => {
-  store.fetchProjects()
-  store.fetchRankData()
-  store.fetchTags()
+  await store.fetchProjects()
+  await store.fetchRankData()
+  await store.fetchTags()
   await loadKeywordTags()
+  await fetchGscData()
+  dataLoaded.value = true
 })
 
 const loadKeywordTags = async () => {
@@ -285,41 +318,48 @@ const loadKeywordTags = async () => {
 }
 
 const filteredRankData = computed(() => {
-  let filtered = rankData.value
+  let filtered = rankData.value;
 
-  if (selectedProject.value) {
-    filtered = filtered.filter(item => item.project_id === selectedProject.value)
+  // Apply filters for selected project and tag
+  if (selectedProject.value !== null) {
+    filtered = filtered.filter(item => item.project_id === Number(selectedProject.value));
+  }
+  if (selectedTag.value !== null) {
+    filtered = filtered.filter(item => item.tags && item.tags.some(tag => tag.id === Number(selectedTag.value)));
   }
 
-  if (selectedTag.value) {
-    filtered = filtered.filter(item => 
-      item.tags && item.tags.some(tag => tag.id === selectedTag.value)
-    )
-  }
+  // Apply date range filter if needed
 
-  if (dateRange.value.start && dateRange.value.end) {
-    filtered = filtered.filter(item => {
-      const itemDate = new Date(item.date)
-      itemDate.setHours(0, 0, 0, 0) // Reset time to start of day
-      
-      const startDate = new Date(dateRange.value.start)
-      startDate.setHours(0, 0, 0, 0)
-      
-      const endDate = new Date(dateRange.value.end)
-      endDate.setHours(23, 59, 59, 999) // Set time to end of day
-      
-      return itemDate >= startDate && itemDate <= endDate
-    })
-  }
+  return filtered.map(item => {
+    const gscDataArray = gscDataMap.value[item.keyword_id] || [];
+    const itemDate = new Date(item.date);
+    let closestData = null;
+    let minDateDiff = Infinity;
 
-  return filtered
-})
+    gscDataArray.forEach(gscEntry => {
+      const gscDate = new Date(gscEntry.date);
+      const dateDiff = Math.abs(itemDate - gscDate);
+      if (dateDiff < minDateDiff) {
+        minDateDiff = dateDiff;
+        closestData = gscEntry;
+      }
+    });
+
+    return {
+      ...item,
+      gscDataForDate: closestData,
+    };
+  });
+});
 
 const latestRankData = computed(() => {
   const keywordMap = new Map()
   
   filteredRankData.value.forEach(item => {
-    if (!keywordMap.has(item.keyword_id) || new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)) {
+    if (
+      !keywordMap.has(item.keyword_id) ||
+      new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)
+    ) {
       keywordMap.set(item.keyword_id, item)
     }
   })
@@ -418,9 +458,12 @@ const goToPage = (page) => {
 }
 
 watch([selectedProject, selectedTag, dateRange], async () => {
+  console.log('Date range changed:', dateRange.value)
   currentPage.value = 1
   await loadKeywordTags()
+  await fetchGscData()
 })
+
 
 const fetchSerpData = async () => {
   isLoading.value = true
@@ -479,9 +522,10 @@ const fetchSingleSerpData = async (item) => {
 }
 
 const formatDate = (dateString) => {
-  const date = new Date(dateString)
-  return date.toLocaleString()
-}
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return isNaN(date.getTime()) ? 'Invalid Date' : date.toLocaleDateString();
+};
 
 const closeSerpDetails = () => {
   selectedSerpData.value = null
@@ -544,7 +588,6 @@ const exportKeywordHistory = async () => {
     }
   } catch (error) {
     console.error('Error exporting keyword history:', error)
-    // You might want to show an error message to the user here
   }
 }
 
@@ -569,19 +612,38 @@ const closeShareOfVoiceModal = () => {
 };
 
 const fetchGscData = async () => {
-  if (selectedProject.value && dateRange.value.start && dateRange.value.end) {
+  if (dateRange.value.start && dateRange.value.end) {
     try {
-      const gscData = await store.fetchGscData(selectedProject.value, dateRange.value.start, dateRange.value.end)
-      // Merge GSC data with rank data
-      filteredRankData.value = filteredRankData.value.map(item => ({
-        ...item,
-        gscData: gscData[item.keyword_id] || null
-      }))
+      const projectId = selectedProject.value ? parseInt(selectedProject.value) : null;
+      const gscDataResponse = await store.fetchGscData(
+        projectId,
+        dateRange.value.start,
+        dateRange.value.end
+      );
+
+      gscDataMap.value = {};
+      gscDataResponse.forEach(item => {
+        if (!gscDataMap.value[item.keyword_id]) {
+          gscDataMap.value[item.keyword_id] = [];
+        }
+        gscDataMap.value[item.keyword_id].push(item);
+      });
+      console.log('GSC Data Map:', gscDataMap.value);
     } catch (error) {
-      console.error('Error fetching GSC data:', error)
+      console.error('Error fetching GSC data:', error);
     }
+  } else {
+    console.warn('Date range is invalid.');
   }
-}
+};
+
+watch(filteredRankData, (newData) => {
+  console.log('Filtered Rank Data:', newData)
+})
+
+watch(dateRange, (newRange) => {
+  console.log('Date range changed:', newRange)
+})
 </script>
 
 <style scoped>
