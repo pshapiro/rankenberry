@@ -76,7 +76,8 @@
       </div>
     </div>
 
-    <table class="table is-fullwidth is-striped is-hoverable">
+
+    <table v-if="dataLoaded" class="table is-fullwidth is-striped is-hoverable">
       <thead>
         <tr>
           <th>Date</th>
@@ -85,26 +86,49 @@
           <th>Rank</th>
           <th>Search Volume</th>
           <th>Change</th>
+          <th>GSC Avg Position</th>
+          <th>GSC Clicks</th>
+          <th>GSC Impressions</th>
+          <th>GSC CTR</th>
           <th>Actions</th>
           <th>Tags</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="item in paginatedRankData" :key="item.id">
+          <!-- Date -->
           <td>{{ formatDate(item.date) }}</td>
+          
+          <!-- Keyword -->
           <td>{{ item.keyword }}</td>
+          
+          <!-- Domain -->
           <td>{{ item.domain }}</td>
+          
+          <!-- Rank -->
           <td>{{ item.rank === null || item.rank === -1 ? '-' : item.rank }}</td>
+          
+          <!-- Search Volume -->
           <td>{{ item.search_volume === null ? '-' : item.search_volume }}</td>
+          
+          <!-- Change (Rank Change with Arrows) -->
           <td>
             <span v-if="rankChanges[item.keyword_id] && rankChanges[item.keyword_id].length > 1">
-              <span v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1" class="has-text-danger">
+              <span
+                v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
+                class="has-text-danger"
+              >
                 ▼ {{ rankChanges[item.keyword_id][1].rank }}
               </span>
-              <span v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)" class="has-text-success">
+              <span
+                v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)"
+                class="has-text-success"
+              >
                 ▲ {{ item.rank }}
               </span>
-              <span v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1">
+              <span
+                v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
+              >
                 <span v-if="item.rank < rankChanges[item.keyword_id][1].rank" class="has-text-success">
                   ▲ {{ rankChanges[item.keyword_id][1].rank - item.rank }}
                 </span>
@@ -117,16 +141,61 @@
             </span>
             <span v-else>-</span>
           </td>
+
+         <!-- GSC Avg Position -->
+        <td>
+          <span v-if="item.gscDataForDate">
+            {{ item.gscDataForDate.position.toFixed(2) }}
+            <span v-if="item.gscDataForDate.date !== item.date.split('T')[0]" class="has-text-grey">
+              ({{ formatDate(item.gscDataForDate.date) }})
+            </span>
+          </span>
+          <span v-else>-</span>
+        </td>
+
+          <!-- GSC Clicks -->
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ item.gscDataForDate.clicks }}
+            </span>
+            <span v-else>-</span>
+          </td>
+
+          <!-- GSC Impressions -->
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ item.gscDataForDate.impressions }}
+            </span>
+            <span v-else>-</span>
+          </td>
+
+          <!-- GSC CTR -->
+          <td>
+            <span v-if="item.gscDataForDate">
+              {{ (item.gscDataForDate.ctr * 100).toFixed(2) }}%
+            </span>
+            <span v-else>-</span>
+          </td>
+
+          <!-- Actions -->
           <td>
             <div class="buttons">
               <button @click="viewDetails(item)" class="button is-small is-info">
                 {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
               </button>
-              <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
+              <button
+                @click="fetchSingleSerpData(item)"
+                :disabled="!item.keyword_id"
+                class="button is-small is-primary"
+              >
+                Fetch New Data
+              </button>
               <button @click="viewKeywordHistory(item)" class="button is-small is-warning">View History</button>
               <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
+          
+          <!-- Tags -->
           <td>
             <div class="tags">
               <span v-for="tag in item.tags" :key="tag.id" class="tag is-info is-small">
@@ -138,6 +207,9 @@
       </tbody>
     </table>
 
+    <div v-else class="has-text-centered">
+      <p>Loading data...</p>
+    </div>
     <!-- Pagination -->
     <nav class="pagination is-centered" role="navigation" aria-label="pagination">
       <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
@@ -204,12 +276,11 @@ import { storeToRefs } from 'pinia'
 import SerpDetails from './SerpDetails.vue'
 import KeywordHistoryModal from './KeywordHistoryModal.vue'
 import ShareOfVoiceChart from './ShareOfVoiceChart.vue'
-import Plotly from 'plotly.js-dist-min'
 
 const store = useMainStore()
 const { rankData, projects, tags } = storeToRefs(store)
-const selectedProject = ref('')
-const selectedTag = ref('')
+const selectedProject = ref(null)
+const selectedTag = ref(null)
 const selectedSerpData = ref(null)
 const selectedKeyword = ref('')
 const isLoading = ref(false)
@@ -218,18 +289,29 @@ const itemsPerPage = 10
 const isKeywordHistoryModalOpen = ref(false)
 const selectedKeywordId = ref(null)
 const keywordHistory = ref([])
-const dateRange = ref({ start: null, end: null })
+// const dateRange = ref({
+//   start: '',
+//   end: ''
+// })
+
+const dateRange = ref({
+  start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+  end: new Date().toISOString().split('T')[0],
+});
+
+console.log('Date Range:', dateRange.value);
 const isShareOfVoiceModalOpen = ref(false)
-const shareOfVoiceData = ref(null)
-const donutChartData = ref(null)
-const lineChart = ref(null)
-const donutChart = ref(null)
+const dataLoaded = ref(false) // New flag to indicate data loading status
+const gscDataMap = ref({})
+
 
 onMounted(async () => {
-  store.fetchProjects()
-  store.fetchRankData()
-  store.fetchTags()
+  await store.fetchProjects()
+  await store.fetchRankData()
+  await store.fetchTags()
   await loadKeywordTags()
+  await fetchGscData()
+  dataLoaded.value = true
 })
 
 const loadKeywordTags = async () => {
@@ -239,41 +321,48 @@ const loadKeywordTags = async () => {
 }
 
 const filteredRankData = computed(() => {
-  let filtered = rankData.value
+  let filtered = rankData.value;
 
-  if (selectedProject.value) {
-    filtered = filtered.filter(item => item.project_id === selectedProject.value)
+  // Apply filters for selected project and tag
+  if (selectedProject.value !== null) {
+    filtered = filtered.filter(item => item.project_id === Number(selectedProject.value));
+  }
+  if (selectedTag.value !== null) {
+    filtered = filtered.filter(item =>
+      item.tags && item.tags.some(tag => tag.id === Number(selectedTag.value))
+    );
   }
 
-  if (selectedTag.value) {
-    filtered = filtered.filter(item => 
-      item.tags && item.tags.some(tag => tag.id === selectedTag.value)
-    )
-  }
+  return filtered.map(item => {
+    const gscDataArray = gscDataMap.value[item.keyword_id] || [];
+    const itemDateStr = item.date.split('T')[0]; // 'YYYY-MM-DD'
+    const itemDate = new Date(itemDateStr);
 
-  if (dateRange.value.start && dateRange.value.end) {
-    filtered = filtered.filter(item => {
-      const itemDate = new Date(item.date)
-      itemDate.setHours(0, 0, 0, 0) // Reset time to start of day
-      
-      const startDate = new Date(dateRange.value.start)
-      startDate.setHours(0, 0, 0, 0)
-      
-      const endDate = new Date(dateRange.value.end)
-      endDate.setHours(23, 59, 59, 999) // Set time to end of day
-      
-      return itemDate >= startDate && itemDate <= endDate
-    })
-  }
+    // Find GSC data for the same date
+    let gscDataForDate = gscDataArray.find(gscEntry => gscEntry.date === itemDateStr);
 
-  return filtered
-})
+    if (!gscDataForDate) {
+      // Find the most recent GSC data prior to or on the rank date
+      gscDataForDate = gscDataArray
+        .filter(gscEntry => new Date(gscEntry.date) <= itemDate)
+        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    }
+
+    return {
+      ...item,
+      gscDataForDate: gscDataForDate || null,
+    };
+  });
+});
 
 const latestRankData = computed(() => {
   const keywordMap = new Map()
   
   filteredRankData.value.forEach(item => {
-    if (!keywordMap.has(item.keyword_id) || new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)) {
+    if (
+      !keywordMap.has(item.keyword_id) ||
+      new Date(item.date) > new Date(keywordMap.get(item.keyword_id).date)
+    ) {
       keywordMap.set(item.keyword_id, item)
     }
   })
@@ -372,9 +461,12 @@ const goToPage = (page) => {
 }
 
 watch([selectedProject, selectedTag, dateRange], async () => {
+  console.log('Date range changed:', dateRange.value)
   currentPage.value = 1
   await loadKeywordTags()
+  await fetchGscData()
 })
+
 
 const fetchSerpData = async () => {
   isLoading.value = true
@@ -386,6 +478,7 @@ const fetchSerpData = async () => {
     }
     await store.fetchRankData()
     console.log("Fetched rank data:", store.rankData)  // Add this line
+    await fetchGscData() // Add this line
     await loadKeywordTags()
   } catch (error) {
     console.error('Error fetching SERP data:', error)
@@ -432,9 +525,10 @@ const fetchSingleSerpData = async (item) => {
 }
 
 const formatDate = (dateString) => {
-  const date = new Date(dateString)
-  return date.toLocaleString()
-}
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return isNaN(date.getTime()) ? 'Invalid Date' : date.toLocaleDateString();
+};
 
 const closeSerpDetails = () => {
   selectedSerpData.value = null
@@ -497,7 +591,6 @@ const exportKeywordHistory = async () => {
     }
   } catch (error) {
     console.error('Error exporting keyword history:', error)
-    // You might want to show an error message to the user here
   }
 }
 
@@ -520,6 +613,40 @@ const showShareOfVoice = () => {
 const closeShareOfVoiceModal = () => {
   isShareOfVoiceModalOpen.value = false;
 };
+
+const fetchGscData = async () => {
+  if (dateRange.value.start && dateRange.value.end) {
+    try {
+      const projectId = selectedProject.value ? parseInt(selectedProject.value) : null;
+      const gscDataResponse = await store.fetchGscData(
+        projectId,
+        dateRange.value.start,
+        dateRange.value.end
+      );
+
+      gscDataMap.value = {};
+      gscDataResponse.forEach(item => {
+        if (!gscDataMap.value[item.keyword_id]) {
+          gscDataMap.value[item.keyword_id] = [];
+        }
+        gscDataMap.value[item.keyword_id].push(item);
+      });
+      console.log('GSC Data Map:', gscDataMap.value);
+    } catch (error) {
+      console.error('Error fetching GSC data:', error);
+    }
+  } else {
+    console.warn('Date range is invalid.');
+  }
+};
+
+// watch(filteredRankData, (newData) => {
+//   console.log('Filtered Rank Data:', newData)
+// })
+
+watch(dateRange, (newRange) => {
+  console.log('Date range changed:', newRange)
+})
 </script>
 
 <style scoped>

@@ -145,7 +145,20 @@ const createChart = () => {
 
   // Group data by date and find the best rank for each day
   const dailyBestRanks = filteredHistory.value.reduce((acc, entry) => {
-    const date = new Date(entry.date + 'Z').toISOString().split('T')[0]
+    let date
+    try {
+      // Try to create a valid Date object
+      date = new Date(entry.date)
+      if (isNaN(date.getTime())) {
+        console.warn(`Invalid date: ${entry.date}`)
+        return acc
+      }
+      date = date.toISOString().split('T')[0]
+    } catch (error) {
+      console.warn(`Error processing date: ${entry.date}`, error)
+      return acc
+    }
+
     if (!acc[date] || (entry.rank !== -1 && (acc[date].rank === -1 || entry.rank < acc[date].rank))) {
       acc[date] = { date, rank: entry.rank, search_volume: entry.search_volume }
     }
@@ -157,8 +170,14 @@ const createChart = () => {
   // Ensure we have all dates from the first to the last
   const dates = Object.keys(dailyBestRanks).sort()
   console.log('Sorted dates:', dates)
-  const firstDate = new Date(dates[0] + 'T00:00:00Z')
-  const lastDate = new Date(dates[dates.length - 1] + 'T00:00:00Z')
+
+  if (dates.length < 2) {
+    console.log('Not enough valid data points for a line chart')
+    return
+  }
+
+  const firstDate = new Date(dates[0])
+  const lastDate = new Date(dates[dates.length - 1])
 
   const chartData = []
   for (let d = new Date(firstDate); d <= lastDate; d.setUTCDate(d.getUTCDate() + 1)) {
