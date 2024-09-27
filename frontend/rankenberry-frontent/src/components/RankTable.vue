@@ -142,18 +142,21 @@
             <span v-else>-</span>
           </td>
 
-          <!-- GSC Avg Position -->
-          <td>
-            <span v-if="item.gscDataForDate">
-              {{ item.gscDataForDate.position.toFixed(2) }} ({{ formatDate(item.gscDataForDate.date) }})
+         <!-- GSC Avg Position -->
+        <td>
+          <span v-if="item.gscDataForDate">
+            {{ item.gscDataForDate.position.toFixed(2) }}
+            <span v-if="item.gscDataForDate.date !== item.date.split('T')[0]" class="has-text-grey">
+              ({{ formatDate(item.gscDataForDate.date) }})
             </span>
-            <span v-else>-</span>
-          </td>
+          </span>
+          <span v-else>-</span>
+        </td>
 
           <!-- GSC Clicks -->
           <td>
             <span v-if="item.gscDataForDate">
-              {{ item.gscDataForDate.clicks }} ({{ formatDate(item.gscDataForDate.date) }})
+              {{ item.gscDataForDate.clicks }}
             </span>
             <span v-else>-</span>
           </td>
@@ -161,7 +164,7 @@
           <!-- GSC Impressions -->
           <td>
             <span v-if="item.gscDataForDate">
-              {{ item.gscDataForDate.impressions }} ({{ formatDate(item.gscDataForDate.date) }})
+              {{ item.gscDataForDate.impressions }}
             </span>
             <span v-else>-</span>
           </td>
@@ -169,7 +172,7 @@
           <!-- GSC CTR -->
           <td>
             <span v-if="item.gscDataForDate">
-              {{ (item.gscDataForDate.ctr * 100).toFixed(2) }}% ({{ formatDate(item.gscDataForDate.date) }})
+              {{ (item.gscDataForDate.ctr * 100).toFixed(2) }}%
             </span>
             <span v-else>-</span>
           </td>
@@ -325,29 +328,29 @@ const filteredRankData = computed(() => {
     filtered = filtered.filter(item => item.project_id === Number(selectedProject.value));
   }
   if (selectedTag.value !== null) {
-    filtered = filtered.filter(item => item.tags && item.tags.some(tag => tag.id === Number(selectedTag.value)));
+    filtered = filtered.filter(item =>
+      item.tags && item.tags.some(tag => tag.id === Number(selectedTag.value))
+    );
   }
-
-  // Apply date range filter if needed
 
   return filtered.map(item => {
     const gscDataArray = gscDataMap.value[item.keyword_id] || [];
-    const itemDate = new Date(item.date);
-    let closestData = null;
-    let minDateDiff = Infinity;
+    const itemDateStr = item.date.split('T')[0]; // 'YYYY-MM-DD'
+    const itemDate = new Date(itemDateStr);
 
-    gscDataArray.forEach(gscEntry => {
-      const gscDate = new Date(gscEntry.date);
-      const dateDiff = Math.abs(itemDate - gscDate);
-      if (dateDiff < minDateDiff) {
-        minDateDiff = dateDiff;
-        closestData = gscEntry;
-      }
-    });
+    // Find GSC data for the same date
+    let gscDataForDate = gscDataArray.find(gscEntry => gscEntry.date === itemDateStr);
+
+    if (!gscDataForDate) {
+      // Find the most recent GSC data prior to or on the rank date
+      gscDataForDate = gscDataArray
+        .filter(gscEntry => new Date(gscEntry.date) <= itemDate)
+        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    }
 
     return {
       ...item,
-      gscDataForDate: closestData,
+      gscDataForDate: gscDataForDate || null,
     };
   });
 });
@@ -637,9 +640,9 @@ const fetchGscData = async () => {
   }
 };
 
-watch(filteredRankData, (newData) => {
-  console.log('Filtered Rank Data:', newData)
-})
+// watch(filteredRankData, (newData) => {
+//   console.log('Filtered Rank Data:', newData)
+// })
 
 watch(dateRange, (newRange) => {
   console.log('Date range changed:', newRange)
