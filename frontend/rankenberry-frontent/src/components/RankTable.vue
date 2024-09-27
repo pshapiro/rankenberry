@@ -85,26 +85,49 @@
           <th>Rank</th>
           <th>Search Volume</th>
           <th>Change</th>
+          <th>GSC Avg Position</th>
+          <th>GSC Clicks</th>
+          <th>GSC Impressions</th>
+          <th>GSC CTR</th>
           <th>Actions</th>
           <th>Tags</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="item in paginatedRankData" :key="item.id">
+          <!-- Date -->
           <td>{{ formatDate(item.date) }}</td>
+          
+          <!-- Keyword -->
           <td>{{ item.keyword }}</td>
+          
+          <!-- Domain -->
           <td>{{ item.domain }}</td>
+          
+          <!-- Rank -->
           <td>{{ item.rank === null || item.rank === -1 ? '-' : item.rank }}</td>
+          
+          <!-- Search Volume -->
           <td>{{ item.search_volume === null ? '-' : item.search_volume }}</td>
+          
+          <!-- Change (Rank Change with Arrows) -->
           <td>
             <span v-if="rankChanges[item.keyword_id] && rankChanges[item.keyword_id].length > 1">
-              <span v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1" class="has-text-danger">
+              <span
+                v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
+                class="has-text-danger"
+              >
                 ▼ {{ rankChanges[item.keyword_id][1].rank }}
               </span>
-              <span v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)" class="has-text-success">
+              <span
+                v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)"
+                class="has-text-success"
+              >
                 ▲ {{ item.rank }}
               </span>
-              <span v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1">
+              <span
+                v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
+              >
                 <span v-if="item.rank < rankChanges[item.keyword_id][1].rank" class="has-text-success">
                   ▲ {{ rankChanges[item.keyword_id][1].rank - item.rank }}
                 </span>
@@ -117,16 +140,38 @@
             </span>
             <span v-else>-</span>
           </td>
+          
+          <!-- GSC Avg Position -->
+          <td>{{ item.gscData ? item.gscData.avg_position.toFixed(2) : '-' }}</td>
+          
+          <!-- GSC Clicks -->
+          <td>{{ item.gscData ? item.gscData.total_clicks : '-' }}</td>
+          
+          <!-- GSC Impressions -->
+          <td>{{ item.gscData ? item.gscData.total_impressions : '-' }}</td>
+          
+          <!-- GSC CTR -->
+          <td>{{ item.gscData ? (item.gscData.avg_ctr * 100).toFixed(2) + '%' : '-' }}</td>
+          
+          <!-- Actions -->
           <td>
             <div class="buttons">
               <button @click="viewDetails(item)" class="button is-small is-info">
                 {{ selectedSerpData && selectedSerpData.id === item.id ? 'Hide Details' : 'View Details' }}
               </button>
-              <button @click="fetchSingleSerpData(item)" :disabled="!item.keyword_id" class="button is-small is-primary">Fetch New Data</button>
+              <button
+                @click="fetchSingleSerpData(item)"
+                :disabled="!item.keyword_id"
+                class="button is-small is-primary"
+              >
+                Fetch New Data
+              </button>
               <button @click="viewKeywordHistory(item)" class="button is-small is-warning">View History</button>
               <button @click="deleteRankData(item.id)" class="button is-small is-danger">Delete</button>
             </div>
           </td>
+          
+          <!-- Tags -->
           <td>
             <div class="tags">
               <span v-for="tag in item.tags" :key="tag.id" class="tag is-info is-small">
@@ -136,6 +181,7 @@
           </td>
         </tr>
       </tbody>
+
     </table>
 
     <!-- Pagination -->
@@ -386,6 +432,7 @@ const fetchSerpData = async () => {
     }
     await store.fetchRankData()
     console.log("Fetched rank data:", store.rankData)  // Add this line
+    await fetchGscData() // Add this line
     await loadKeywordTags()
   } catch (error) {
     console.error('Error fetching SERP data:', error)
@@ -520,6 +567,21 @@ const showShareOfVoice = () => {
 const closeShareOfVoiceModal = () => {
   isShareOfVoiceModalOpen.value = false;
 };
+
+const fetchGscData = async () => {
+  if (selectedProject.value && dateRange.value.start && dateRange.value.end) {
+    try {
+      const gscData = await store.fetchGscData(selectedProject.value, dateRange.value.start, dateRange.value.end)
+      // Merge GSC data with rank data
+      filteredRankData.value = filteredRankData.value.map(item => ({
+        ...item,
+        gscData: gscData[item.keyword_id] || null
+      }))
+    } catch (error) {
+      console.error('Error fetching GSC data:', error)
+    }
+  }
+}
 </script>
 
 <style scoped>

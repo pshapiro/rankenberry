@@ -1,6 +1,7 @@
 import os
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from typing import Optional
 
 SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 

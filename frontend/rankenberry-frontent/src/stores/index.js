@@ -15,14 +15,14 @@ export const useMainStore = defineStore('main', {
   actions: {
     async fetchProjects() {
       try {
-        const response = await axios.get(`${API_URL}/projects`)
-        this.projects = response.data.projects || response.data
-        return this.projects
+        const response = await axios.get(`${API_URL}/projects`);
+        this.projects = response.data; // Update the state variable
+        return response.data;
       } catch (error) {
-        console.error('Error fetching projects:', error)
-        throw error
+        console.error('Error fetching projects:', error);
+        throw error;
       }
-    },
+    },    
     async addProject(name, domain) {
       try {
         const response = await axios.post(`${API_URL}/projects`, { name, domain })
@@ -40,15 +40,15 @@ export const useMainStore = defineStore('main', {
 
     async addGSCDomain(domain, projectId) {
       try {
-        const response = await axios.post(`${API_URL}/gsc/domains`, { domain, project_id: projectId })
-        this.gscDomain = response.data.domain_id
-        return response.data.domain_id
+        const response = await axios.post(`${API_URL}/gsc/domains`, { domain, project_id: projectId });
+        this.gscDomain = response.data.domain_id;
+        return response.data.domain_id;
       } catch (error) {
-        console.error('Error adding GSC domain:', error)
-        throw error
+        console.error('Error adding GSC domain:', error);
+        throw error;
       }
     },
-    
+
     async fetchKeywords(projectId) {
       try {
         const response = await axios.get(`${API_URL}/projects/${projectId}/keywords`)
@@ -146,11 +146,11 @@ export const useMainStore = defineStore('main', {
     },
     async fetchAllKeywords() {
       try {
-        const response = await axios.get(`${API_URL}/keywords`)
-        this.keywords = response.data
+        const response = await axios.get(`${API_URL}/keywords`);
+        this.keywords = response.data; // Update the state
       } catch (error) {
-        console.error('Error fetching all keywords:', error)
-        throw error
+        console.error('Error fetching all keywords:', error);
+        throw error;
       }
     },
     async deleteKeyword(keywordId) {
@@ -308,42 +308,67 @@ export const useMainStore = defineStore('main', {
         throw error;
       }
     },
-    async fetchGSCDomains() {
-      try {
-        const response = await axios.get(`${API_URL}/gsc/domains`)
-        return response.data.domains
-      } catch (error) {
-        console.error('Error fetching GSC domains:', error)
-        throw error
-      }
+    
+  async fetchGSCDomains(projectId) {
+    try {
+      const response = await axios.get(`${API_URL}/gsc/domains`, {
+        params: { project_id: projectId }
+      });
+      return response.data.domains;
+    } catch (error) {
+      console.error('Error fetching GSC domains:', error);
+      throw error;
+        }
     },
 
     async addGSCDomain(domain, projectId) {
       try {
-        const response = await axios.post(`${API_URL}/gsc/domains`, { domain, project_id: projectId })
-        return response.data.domain_id
+        const response = await axios.post(`${API_URL}/gsc/domains`, { domain, project_id: projectId });
+        return response.data.domain_id;
       } catch (error) {
-        console.error('Error adding GSC domain:', error)
-        throw error
+        console.error('Error adding GSC domain:', error);
+        throw error;
       }
     },
 
     async setGSCDomain(domainId, userId, projectId = null) {
       try {
-        const payload = {
-          user_id: userId,
-          project_id: projectId
-        };
-        console.log('Sending payload:', payload);
-        const response = await axios.put(`${API_URL}/gsc/domains/${domainId}`, payload);
-        this.gscDomain = response.data.domain_id;
+          const payload = {
+              user_id: userId,
+              project_id: projectId
+          };
+          console.log('Sending payload:', payload);
+          const response = await axios.put(`${API_URL}/gsc/domains/${domainId}`, payload);
+          this.gscDomain = response.data.domain_id;
+          return response.data;
+      } catch (error) {
+          console.error('Error setting GSC domain:', error);
+          if (error.response) {
+              console.error('Response data:', error.response.data);
+          }
+          throw error;
+      }
+    },
+
+    async getGSCDomain(domainId) {
+      try {
+        const response = await axios.get(`${API_URL}/gsc/domains/${domainId}`);
         return response.data;
       } catch (error) {
-        console.error('Error setting GSC domain:', error);
-        if (error.response) {
-          console.error('Response data:', error.response.data);
-        }
+        console.error('Error getting GSC domain:', error);
         throw error;
+      }
+    },
+
+    fetchGscData: async (projectId, startDate, endDate) => {
+      try {
+        const response = await axios.get(`/api/gsc-data/${projectId}`, {
+          params: { start_date: startDate, end_date: endDate }
+        })
+        return response.data
+      } catch (error) {
+        console.error('Error fetching GSC data:', error)
+        throw error
       }
     },
 

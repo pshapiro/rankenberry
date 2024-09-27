@@ -5,7 +5,8 @@ import logging
 import json
 from dateutil import parser
 import os
-
+from fastapi import HTTPException
+from datetime import datetime, timedelta
 # Determine the absolute path to the directory containing this file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'seo_rank_tracker.db')
@@ -98,14 +99,32 @@ def add_keyword(project_id, keyword):
     conn.close()
     return keyword_id
 
-def get_domain_by_id(domain_id):
+def create_gsc_data_table():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  keyword_id INTEGER,
+                  date TEXT,
+                  clicks INTEGER,
+                  impressions INTEGER,
+                  ctr REAL,
+                  position REAL,
+                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    conn.commit()
+    conn.close()
+
+def get_domain_by_id(domain_id: int) -> str:
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT domain FROM gsc_domains WHERE id = ?", (domain_id,))
-    result = c.fetchone()
+    domain = c.fetchone()
     conn.close()
-    return result['domain'] if result else None
-
+    if domain:
+        return f"https://{domain[0]}"
+    else:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    
 def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
     c = conn.cursor()
@@ -219,7 +238,7 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
         FROM serp_data s
         JOIN keywords k ON s.keyword_id = k.id
         JOIN projects p ON k.project_id = p.id
-        WHERE k.project_id = ? AND s.date BETWEEN ? AND ?
+        WHERE k.project_id = ? AND s.date BETWEEN ? AND ? AND k.active = 1
     '''
     params = (project_id, start_date, end_date)
 
@@ -241,3 +260,89 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
         }
         for row in data
     ]
+
+def create_gsc_data_table():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  keyword_id INTEGER,
+                  date TEXT,
+                  clicks INTEGER,
+                  impressions INTEGER,
+                  ctr REAL,
+                  position REAL,
+                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_credentials
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  project_id INTEGER UNIQUE,
+                  credentials TEXT,
+                  FOREIGN KEY (project_id) REFERENCES projects (id))''')
+    conn.commit()
+    conn.close()
+
+def get_gsc_credentials_from_db(project_id):
+    try:
+        conn = sqlite3.connect('seo_rank_tracker.db')
+        c = conn.cursor()
+        c.execute("SELECT credentials FROM gsc_credentials WHERE project_id = ?", (project_id,))
+        result = c.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in get_gsc_credentials_from_db: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred")
+
+def update_gsc_credentials_in_db(project_id, credentials_json):
+    try:
+        conn = sqlite3.connect('seo_rank_tracker.db')
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO gsc_credentials (project_id, credentials)
+            VALUES (?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET credentials=excluded.credentials
+        """, (project_id, credentials_json))
+        conn.commit()
+        conn.close()
+        logging.info(f"GSC credentials updated for project_id={project_id}")
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in update_gsc_credentials_in_db: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred")
+
+def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position):
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # First, get the keyword_id
+    c.execute("SELECT id FROM keywords WHERE project_id = ? AND keyword = ?", (project_id, keyword))
+    result = c.fetchone()
+    if result:
+        keyword_id = result[0]
+    else:
+        # If the keyword doesn't exist, create it
+        c.execute("INSERT INTO keywords (project_id, keyword) VALUES (?, ?)", (project_id, keyword))
+        keyword_id = c.lastrowid
+    
+    c.execute('''INSERT OR REPLACE INTO gsc_data 
+                 (keyword_id, date, clicks, impressions, ctr, position)
+                 VALUES (?, ?, ?, ?, ?, ?)''',
+              (keyword_id, date, clicks, impressions, ctr, position))
+    conn.commit()
+    conn.close()
+    logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+
+async def backfill_gsc_data(project_id, keyword_id, keyword):
+    # Get the earliest date we have data for
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT MIN(date) FROM gsc_data WHERE keyword_id = ?", (keyword_id,))
+    earliest_date = c.fetchone()[0]
+    conn.close()
+
+    if earliest_date:
+        earliest_date = datetime.strptime(earliest_date, "%Y-%m-%d").date()
+        end_date = earliest_date - timedelta(days=1)
+        start_date = end_date - timedelta(days=30)  # Backfill up to 30 days
+
+        gsc_data = await fetch_gsc_data(project_id, keyword, start_date, end_date)
+        add_gsc_data(project_id, keyword_id, gsc_data)

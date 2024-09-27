@@ -1,5 +1,5 @@
 <template>
-  <div class="options-page">
+  <div class="options-page container">
     <h1 class="title">Options</h1>
     <GoogleSignIn @signed-in="onSignedIn" v-if="!isSignedIn" />
     <GSCDomainSelector v-if="isSignedIn" @domain-added="onDomainAdded" />
@@ -30,3 +30,9 @@ const onDomainAdded = async (domainId) => {
   }
 }
 </script>
+
+<style scoped>
+.options-page {
+  margin-top: 40px;
+}
+</style>

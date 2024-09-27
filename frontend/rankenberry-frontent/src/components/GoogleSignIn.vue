@@ -1,40 +1,39 @@
 <template>
-  <div class="google-sign-in">
-    <button @click="signIn" class="button is-primary">
-      Sign in with Google
-    </button>
+  <div>
+    <button @click="signIn" class="button is-primary is-large">Sign in with Google</button>
+    <p v-if="error" class="has-text-danger">{{ error }}</p>
   </div>
 </template>
-
 <script setup>
-import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { ref } from 'vue';
+import axios from 'axios';
 
-const emit = defineEmits(['signed-in'])
+const error = ref(null);
 
 const signIn = async () => {
   try {
-    const response = await axios.get('http://localhost:5001/api/gsc/auth')
-    window.location.href = response.data.authorization_url
-  } catch (error) {
-    console.error('Error initiating Google Sign-In:', error)
-  }
-}
+    // Replace with your actual project ID or logic to obtain it
+    const projectId = 1; // For example purposes
 
-onMounted(async () => {
-  // Handle the OAuth callback
-  if (window.location.pathname === '/api/gsc/oauth2callback') {
-    const urlParams = new URLSearchParams(window.location.search)
-    const code = urlParams.get('code')
-    
-    if (code) {
-      try {
-        await axios.get(`http://localhost:5001/api/gsc/oauth2callback?code=${code}`)
-        emit('signed-in')
-      } catch (error) {
-        console.error('Error completing Google Sign-In:', error)
-      }
+    // Make a request to your backend to get the authorization URL
+    const response = await axios.get(`http://localhost:5001/api/gsc/auth?project_id=${projectId}`);
+    const data = response.data;
+
+    if (data.authorization_url) {
+      // Redirect the browser to the authorization URL
+      window.location.href = data.authorization_url;
+    } else {
+      console.error('No authorization_url received from the server');
+      error.value = 'Failed to initiate Google Sign-In. Please try again.';
     }
+  } catch (err) {
+    console.error('Error initiating Google Sign-In:', err);
+    error.value = 'Failed to initiate Google Sign-In. Please try again.';
   }
-})
+};
 </script>
+<style scoped>
+.has-text-danger {
+  margin-top: 10px;
+}
+</style>

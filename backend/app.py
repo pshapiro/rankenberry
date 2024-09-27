@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Body, Depends
+from fastapi import FastAPI, HTTPException, Body, Depends, Query
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 import sqlite3
 import uvicorn
+import secrets
 import os
 from dotenv import load_dotenv
 import aiohttp
@@ -20,7 +21,11 @@ from database import (
     get_gsc_domains,
     get_gsc_data,
     get_domain_by_id,
-    get_projects
+    get_projects,
+    backfill_gsc_data,
+    update_gsc_credentials_in_db,
+    get_gsc_credentials_from_db,
+    create_gsc_data_table
 )
 import json
 from datetime import datetime, timedelta
@@ -39,10 +44,14 @@ from gsc_auth import create_auth_flow, get_gsc_service
 from database import add_gsc_domain, add_gsc_data, get_gsc_domains, get_gsc_data, get_domain_by_id, get_projects
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from gsc_auth import create_auth_flow
+
 
 gsc_credentials = None
 
 load_dotenv()
+SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 
 app = FastAPI()
 
@@ -377,15 +386,15 @@ async def fetch_serp_data_for_project(project_id: int, request: SerpDataRequest)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    # Fetch keywords for the project (and tag if provided)
+    # Fetch active keywords for the project (and tag if provided)
     if request and request.tag_id:
         c.execute("""
             SELECT k.* FROM keywords k
             JOIN keyword_tags kt ON k.id = kt.keyword_id
-            WHERE k.project_id = ? AND kt.tag_id = ?
+            WHERE k.project_id = ? AND kt.tag_id = ? AND k.active = 1
         """, (project_id, request.tag_id))
     else:
-        c.execute("SELECT * FROM keywords WHERE project_id = ?", (project_id,))
+        c.execute("SELECT * FROM keywords WHERE project_id = ? AND active = 1", (project_id,))
     
     keywords = c.fetchall()
     conn.close()
@@ -407,33 +416,75 @@ async def fetch_serp_data_for_project(project_id: int, request: SerpDataRequest)
 async def startup_event():
     try:
         init_db()
+        create_gsc_data_table()  # Add this line
         logging.info("Database initialized successfully.")
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}")
         raise e
 
 @app.get("/api/gsc/oauth2callback")
-async def gsc_oauth2callback(code: str):
+async def gsc_oauth2callback(state: str, code: str):
     try:
+        logging.info(f"Received OAuth callback with state={state} and code={code}")
+        
+        # Decode the state parameter
+        state_data = json.loads(state)
+        project_id = state_data.get("project_id")
+        csrf_token = state_data.get("csrf_token")
+        
+        logging.info(f"Parsed project_id: {project_id} and csrf_token: {csrf_token}")
+        
+        if project_id is None:
+            logging.error("Missing project_id in state parameter.")
+            raise HTTPException(status_code=400, detail="Missing project ID in state.")
+        
+        # Verify CSRF token
+        expected_project_id = csrf_tokens.get(csrf_token)
+        if expected_project_id != project_id:
+            logging.error("CSRF token mismatch.")
+            raise HTTPException(status_code=400, detail="CSRF token mismatch.")
+        
+        # Remove the CSRF token as it's single-use
+        del csrf_tokens[csrf_token]
+        
         flow = create_auth_flow()
         flow.fetch_token(code=code)
+        
         credentials = flow.credentials
+        credentials_json = credentials.to_json()
         
-        # Store credentials in the session or database
-        # For simplicity, we'll use a global variable here. In a real app, use proper session management.
-        global gsc_credentials
-        gsc_credentials = credentials.to_json()
+        # Store credentials in the database
+        update_gsc_credentials_in_db(project_id, credentials_json)
+        logging.info(f"GSC credentials updated for project_id={project_id}")
         
-        # Redirect to the frontend page for GSC domain selection
-        return RedirectResponse(url="http://localhost:5173/gsc-domain-selection")
+        # Redirect frontend to the domain selection page with the project_id
+        redirect_url = f"http://localhost:5173/gsc-domain-selection?project_id={project_id}"
+        logging.info(f"Redirecting to {redirect_url}")
+        return RedirectResponse(url=redirect_url)
+    except json.JSONDecodeError:
+        logging.exception("Failed to decode state parameter.")
+        raise HTTPException(status_code=400, detail="Invalid state parameter format.")
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        logging.error(f"Error in gsc_oauth2callback: {str(e)}")
+        logging.exception("An error occurred during the OAuth callback.")
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 @app.post("/api/fetch-serp-data/{project_id}")
-async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)):
+async def fetch_serp_data(project_id: int, request: Optional[SerpDataRequest] = None):
+    # Fetch SERP data
     serp_data = await fetch_serp_data_for_project(project_id, request)
-    return {"message": "SERP data fetched successfully", "data": serp_data}
+    
+    # Fetch GSC data
+    gsc_data = await fetch_gsc_data_for_project(project_id, request)
+    
+    # Combine the data
+    combined_data = {
+        "serp_data": serp_data,
+        "gsc_data": gsc_data
+    }
+    
+    return combined_data
 
 @app.post("/api/schedule-rank-pull", response_model=ScheduledPull)
 async def schedule_rank_pull(pull: SchedulePullRequest):
@@ -613,50 +664,55 @@ async def update_search_volume(keyword_id, keyword):
     
     conn.close()
 
+csrf_tokens = {}
+
 @app.get("/api/gsc/auth")
-async def gsc_auth():
+async def gsc_auth(project_id: int = Query(..., description="Project ID")):
     try:
         flow = create_auth_flow()
-        authorization_url, _ = flow.authorization_url(prompt='consent')
+        
+        csrf_token = secrets.token_urlsafe(16)
+        state = json.dumps({"project_id": project_id, "csrf_token": csrf_token})
+        
+        # Store the csrf_token associated with the project_id
+        csrf_tokens[csrf_token] = project_id
+        
+        authorization_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='false',
+            state=state
+        )
+        
+        logging.info(f"Generated authorization URL: {authorization_url}")
+        logging.info(f"State parameter set to: {state}")
+        
         return {"authorization_url": authorization_url}
     except Exception as e:
-        logging.error(f"Error in gsc_auth: {str(e)}")
+        logging.error(f"Error in /api/gsc/auth: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/gsc/oauth2callback")
-async def gsc_oauth2callback(code: str):
-    global gsc_credentials
-    try:
-        flow = create_auth_flow()
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
-        
-        # Store credentials in the global variable
-        gsc_credentials = credentials.to_json()
-        
-        return RedirectResponse(url="http://localhost:5173/gsc-domain-selection")
-    except Exception as e:
-        logging.error(f"Error in gsc_oauth2callback: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/gsc/domains")
-async def get_gsc_domains():
-    global gsc_credentials
-    if not gsc_credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated with Google Search Console")
     
+@app.get("/api/gsc/domains")
+async def get_gsc_domains(project_id: int):
     try:
-        credentials = Credentials.from_authorized_user_info(json.loads(gsc_credentials), ['https://www.googleapis.com/auth/webmasters.readonly'])
+        credentials_json = get_gsc_credentials_from_db(project_id)
+        if not credentials_json:
+            raise HTTPException(status_code=401, detail="Not authenticated with Google Search Console for this project.")
+        
+        credentials = Credentials.from_authorized_user_info(json.loads(credentials_json), SCOPES)
         
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
+            # Save the refreshed credentials back to the database
+            update_gsc_credentials_in_db(project_id, credentials.to_json())
         
-        service = get_gsc_service(credentials)
+        service = build('webmasters', 'v3', credentials=credentials)
         
         sites = service.sites().list().execute()
         domains = [site['siteUrl'] for site in sites.get('siteEntry', [])]
         
         return {"domains": domains}
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logging.error(f"Error fetching GSC domains: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching GSC domains: {str(e)}")
@@ -664,7 +720,7 @@ async def get_gsc_domains():
 @app.post("/api/gsc/domains")
 async def create_gsc_domain(domain: GSCDomain):
     try:
-        user_id = 1  # Placeholder for user ID (Implement proper auth in production)
+        user_id = 1  # Replace with actual user ID from authentication
         logging.info(f"Adding GSC domain: {domain.domain} for project ID: {domain.project_id} by user ID: {user_id}")
         domain_id = add_gsc_domain(user_id, domain.domain, domain.project_id)
         logging.info(f"GSC domain added successfully with ID: {domain_id}")
@@ -676,47 +732,40 @@ async def create_gsc_domain(domain: GSCDomain):
         logging.error(f"Unexpected error in create_gsc_domain: {e}")
         raise HTTPException(status_code=500, detail="Internal server error.")
         
-@app.post("/api/gsc/fetch_data")
-async def fetch_gsc_data(request: GSCDataRequest):
-    # Retrieve credentials from the database or session
-    # This is a placeholder. You need to implement a proper way to store and retrieve credentials.
-    credentials = Credentials.from_authorized_user_file('path/to/credentials.json')
-    service = get_gsc_service(credentials)
-
-    domain = get_domain_by_id(request.domain_id)
+async def fetch_gsc_data_for_project(project_id: int, request: Optional[SerpDataRequest] = None):
+    logging.info(f"Fetching GSC data for project_id: {project_id}")
     
-    start_date = datetime.strptime(request.start_date, "%Y-%m-%d")
-    end_date = datetime.strptime(request.end_date, "%Y-%m-%d")
+    # Get the GSC domain for this project
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT domain FROM gsc_domains WHERE project_id = ?", (project_id,))
+    domain_result = c.fetchone()
+    conn.close()
     
-    data = []
-    while start_date <= end_date:
-        date_str = start_date.strftime("%Y-%m-%d")
-        query = {
-            'startDate': date_str,
-            'endDate': date_str,
-            'dimensions': ['query'],
-            'rowLimit': 25000
-        }
-        response = service.searchanalytics().query(siteUrl=domain, body=query).execute()
-        
-        for row in response.get('rows', []):
-            keyword = row['keys'][0]
-            clicks = row['clicks']
-            impressions = row['impressions']
-            ctr = row['ctr']
-            
-            add_gsc_data(request.domain_id, keyword, date_str, clicks, impressions, ctr)
-            data.append({
-                "keyword": keyword,
-                "date": date_str,
-                "clicks": clicks,
-                "impressions": impressions,
-                "ctr": ctr
-            })
-        
-        start_date += timedelta(days=1)
+    if not domain_result:
+        logging.warning(f"No GSC domain found for project_id: {project_id}")
+        return []
     
-    return data
+    domain = domain_result[0]
+    
+    # Use the date range from the request, or default to last 7 days
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=7)
+    if request and hasattr(request, 'start_date') and hasattr(request, 'end_date'):
+        start_date = datetime.strptime(request.start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(request.end_date, "%Y-%m-%d").date()
+    
+    logging.info(f"Fetching GSC data for domain: {domain}, start_date: {start_date}, end_date: {end_date}")
+    
+    gsc_data = await fetch_gsc_data(project_id, domain, start_date, end_date)
+    
+    # Add the fetched data to the database
+    for row in gsc_data:
+        keyword = row['keys'][0]
+        date = row['keys'][1]
+        add_gsc_data(project_id, keyword, date, row['clicks'], row['impressions'], row['ctr'], row['position'])
+    
+    return gsc_data
 
 @app.get("/api/gsc/data")
 async def get_gsc_data_endpoint(domain_id: int, start_date: str, end_date: str):
@@ -794,45 +843,71 @@ async def fetch_serp_data(project_id: int, request: SerpDataRequest = Body(None)
     async def fetch_and_store(keyword):
         async with semaphore:
             serp_data = await fetch_serp_data(keyword['keyword'])
-            
-            # Check if we need to update the search volume
+            gsc_data = await fetch_gsc_data_for_project(project_id, keyword['keyword'])            # Check if we need to update the search volume
             conn = get_db_connection()
             c = conn.cursor()
             c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword['id'],))
             result = c.fetchone()
-            current_search_volume, last_update = result if result else (None, None)
-            conn.close()
-
+            search_volume, last_update = result if result else (None, None)
+            
             current_time = datetime.now()
-            should_update_volume = True
-
-            if last_update:
-                try:
-                    # Try parsing with the old format
-                    last_update_dt = datetime.strptime(last_update, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    try:
-                        # Try parsing with the new format
-                        last_update_dt = datetime.fromisoformat(last_update)
-                    except ValueError:
-                        # If both fail, set should_update_volume to True
-                        should_update_volume = True
-                    else:
-                        should_update_volume = (current_time - last_update_dt).days > 30
-                else:
-                    should_update_volume = (current_time - last_update_dt).days > 30
-
-            if should_update_volume:
+            should_update = (
+                search_volume is None or 
+                last_update is None or 
+                (current_time - datetime.fromisoformat(last_update)).days > 30
+            )
+            
+            if should_update:
                 search_volume = await fetch_search_volume(keyword['keyword'])
-            else:
-                search_volume = current_search_volume
-
+                c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
+                          (search_volume, current_time.strftime("%Y-%m-%d %H:%M:%S"), keyword['id']))
+                conn.commit()
+            
             add_serp_data(keyword['id'], serp_data, search_volume)
+            add_gsc_data(project_id, keyword['id'], gsc_data)
+            await backfill_gsc_data(project_id, keyword['id'], keyword['keyword'])
+            
+            conn.close()
     
     tasks = [fetch_and_store(keyword) for keyword in active_keywords]
     await asyncio.gather(*tasks)
     
-    return {"message": f"SERP data fetched and stored successfully for {len(active_keywords)} active keywords"}
+    return {"message": f"SERP and GSC data fetched and stored successfully for {len(active_keywords)} keywords"}
+
+@app.get("/api/gsc-data/{project_id}")
+async def get_gsc_data(project_id: int, start_date: str, end_date: str):
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # Get the domain for the project
+    c.execute("SELECT domain FROM projects WHERE id = ?", (project_id,))
+    domain = c.fetchone()[0]
+    
+    # Get the keywords for the project
+    c.execute("SELECT id, keyword FROM keywords WHERE project_id = ?", (project_id,))
+    keywords = c.fetchall()
+    
+    gsc_data = {}
+    for keyword_id, keyword in keywords:
+        c.execute("""
+            SELECT AVG(position) as avg_position, SUM(clicks) as total_clicks, 
+                   SUM(impressions) as total_impressions, AVG(ctr) as avg_ctr
+            FROM gsc_data
+            WHERE keyword_id = ? AND date BETWEEN ? AND ?
+            GROUP BY strftime('%W', date)
+        """, (keyword_id, start_date, end_date))
+        
+        result = c.fetchone()
+        if result:
+            gsc_data[keyword_id] = {
+                'avg_position': result[0],
+                'total_clicks': result[1],
+                'total_impressions': result[2],
+                'avg_ctr': result[3]
+            }
+    
+    conn.close()
+    return gsc_data
 
 @app.post("/api/fetch-serp-data-by-tag/{tag_id}")
 async def fetch_and_store_serp_data_by_tag(tag_id: int):
@@ -860,6 +935,40 @@ async def get_keywords(project_id: int, tag_id: Optional[int] = None):
     conn.close()
     return [dict(zip(['id', 'project_id', 'keyword', 'active', 'search_volume', 'last_volume_update'], keyword)) for keyword in keywords]
 
+async def fetch_gsc_data(project_id, domain, start_date, end_date):
+    try:
+        # Retrieve GSC credentials from the database
+        credentials_json = get_gsc_credentials_from_db(project_id)
+        
+        if not credentials_json:
+            raise ValueError("No GSC credentials found for this project")
+        
+        credentials = Credentials.from_authorized_user_info(json.loads(credentials_json))
+        
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            # Update the refreshed credentials in the database
+            update_gsc_credentials_in_db(project_id, credentials.to_json())
+        
+        service = build('searchconsole', 'v1', credentials=credentials)
+        
+        query = {
+            'startDate': start_date.strftime("%Y-%m-%d"),
+            'endDate': end_date.strftime("%Y-%m-%d"),
+            'dimensions': ['query', 'date'],
+            'rowLimit': 25000
+        }
+        
+        response = service.searchanalytics().query(siteUrl=domain, body=query).execute()
+        
+        return response.get('rows', [])
+    except ValueError as ve:
+        logging.error(f"GSC Credential Error: {str(ve)}")
+        raise HTTPException(status_code=500, detail=f"GSC Credential Error: {str(ve)}")
+    except Exception as e:
+        logging.error(f"Error fetching GSC data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching GSC data: {str(e)}")
+    
 async def get_keywords_by_tag(tag_id: int):
     conn = get_db_connection()
     c = conn.cursor()
@@ -1381,6 +1490,7 @@ async def set_gsc_domain(domain_id: int, update: GSCDomainUpdate):
     logging.info(f"Received update request for domain {domain_id}: {update}")
     try:
         conn = get_db_connection()
+        conn.row_factory = sqlite3.Row  # Set row factory to return rows as dictionaries
         cursor = conn.cursor()
 
         # First, check if the domain exists
@@ -1434,6 +1544,35 @@ async def set_gsc_domain(domain_id: int, update: GSCDomainUpdate):
     finally:
         if conn:
             conn.close()
+
+@app.get("/api/gsc/domains/{domain_id}")
+async def get_gsc_domain(domain_id: int):
+    try:
+        conn = get_db_connection()
+        conn.row_factory = sqlite3.Row  # Set row factory to return rows as dictionaries
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT gd.id, gd.domain, gd.user_id, gd.project_id, p.name as project_name
+        FROM gsc_domains gd
+        LEFT JOIN projects p ON gd.project_id = p.id
+        WHERE gd.id = ?
+        """, (domain_id,))
+        domain = cursor.fetchone()
+        conn.close()
+
+        if not domain:
+            raise HTTPException(status_code=404, detail="GSC domain not found")
+
+        return {
+            "domain_id": domain['id'],
+            "domain": domain['domain'],
+            "user_id": domain['user_id'],
+            "project_id": domain['project_id'],
+            "project_name": domain['project_name']
+        }
+    except Exception as e:
+        logging.error(f"Error retrieving GSC domain: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving GSC domain")
     
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
