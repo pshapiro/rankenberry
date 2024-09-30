@@ -27,7 +27,9 @@ from database import (
     get_gsc_credentials_from_db,
     create_gsc_data_table,
     add_gsc_data_by_keyword_id,
-    update_search_volume_if_needed
+    update_search_volume_if_needed,
+    update_project_in_db,
+    get_project_by_id
 )
 import json
 from datetime import datetime, timedelta, timezone
@@ -82,16 +84,18 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+    )
 
 # Pydantic models
 class ProjectBase(BaseModel):
     name: str
     domain: str
+    branded_terms: Optional[str] = None
+    conversion_rate: Optional[float] = None
 
 class Project(ProjectBase):
     id: int
-    user_id: int
+    user_id: Optional[int] = None
 
 class KeywordBase(BaseModel):
     keyword: str
@@ -822,9 +826,8 @@ async def get_projects():
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(project: ProjectBase):
-    # Use a placeholder user ID (e.g., 1) for now
-    user_id = 1
-    project_id = add_project(project.name, project.domain, user_id)
+    user_id = 1  # Use a placeholder user ID for now
+    project_id = add_project(project.name, project.domain, project.branded_terms, project.conversion_rate, user_id)
     return {"id": project_id, "user_id": user_id, **project.dict()}
 
 @app.get("/api/projects/{project_id}/keywords")
@@ -1605,5 +1608,27 @@ async def fetch_gsc_data_for_keyword(project_id, keyword):
     except Exception as e:
         logging.error(f"Error fetching GSC data for keyword '{keyword['keyword']}': {str(e)}")
     
+@app.put("/api/projects/{project_id}", response_model=Project)
+async def update_project(project_id: int, project: ProjectBase):
+    updated_project = update_project_in_db(project_id, project.dict())
+    if updated_project:
+        return updated_project
+    raise HTTPException(status_code=404, detail="Project not found")
+
+@app.get("/api/projects/{project_id}", response_model=Project)
+async def get_project(project_id: int):
+    try:
+        project = get_project_by_id(project_id)
+        if project:
+            # Ensure all fields from the Project model are present
+            for field in Project.__fields__:
+                if field not in project:
+                    project[field] = None
+            return Project(**project)
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        logging.error(f"Error in get_project endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)
