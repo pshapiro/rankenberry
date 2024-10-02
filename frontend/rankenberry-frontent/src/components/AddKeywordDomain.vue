@@ -15,6 +15,24 @@
         </div>
       </div>
       <div class="field">
+        <label class="label">Branded Terms</label>
+        <div class="control">
+          <textarea v-model="brandedTerms" class="textarea" placeholder="Enter branded terms, one per line"></textarea>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label">Conversion Rate (%)</label>
+        <div class="control">
+          <input v-model="conversionRate" class="input" type="number" min="0" max="100" step="0.01" placeholder="Enter conversion rate">
+        </div>
+      </div>
+      <div class="field">
+        <label class="label">Conversion Value</label>
+        <div class="control">
+          <input v-model="conversionValue" class="input" type="number" min="0" step="0.01" placeholder="Enter conversion value">
+        </div>
+      </div>
+      <div class="field">
         <div class="control">
           <button type="submit" class="button is-primary">Add Project</button>
         </div>
@@ -27,6 +45,7 @@
       <ul v-if="projects.length">
         <li v-for="project in projects" :key="project.id">
           {{ project.name }} ({{ project.domain }})
+          <button @click="editProject(project.id)" class="button is-small is-info">Edit</button>
         </li>
       </ul>
       <p v-else>No projects yet.</p>
@@ -67,16 +86,21 @@
 import { ref, onMounted } from 'vue'
 import { useMainStore } from '../stores'
 import { storeToRefs } from 'pinia'
+import { useRouter } from 'vue-router'
 
 const store = useMainStore()
 const { projects } = storeToRefs(store)
 
 const projectName = ref('')
 const domain = ref('')
+const brandedTerms = ref('')
+const conversionRate = ref('')
+const conversionValue = ref('')
 const selectedProject = ref('')
 const keywords = ref('')
 const message = ref('')
 const isLoading = ref(false)
+const router = useRouter()
 
 onMounted(async () => {
   try {
@@ -89,10 +113,19 @@ onMounted(async () => {
 
 const addProject = async () => {
   try {
-    const newProject = await store.addProject(projectName.value, domain.value)
+    const newProject = await store.addProject(
+      projectName.value, 
+      domain.value, 
+      brandedTerms.value, 
+      conversionRate.value,
+      conversionValue.value
+    )
     message.value = `Project "${newProject.name}" added successfully!`
     projectName.value = ''
     domain.value = ''
+    brandedTerms.value = ''
+    conversionRate.value = ''
+    conversionValue.value = ''
   } catch (error) {
     message.value = `Error adding project: ${error.message}`
     console.error('Error adding project:', error)
@@ -120,6 +153,10 @@ const addKeywords = async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+const editProject = (projectId) => {
+  router.push({ name: 'Edit Project', params: { id: projectId } })
 }
 </script>
 

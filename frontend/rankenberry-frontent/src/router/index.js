@@ -6,6 +6,7 @@ import SchedulePull from '../components/SchedulePull.vue';
 import OptionsPage from '../components/OptionsPage.vue'
 import GSCDomainSelection from '../components/GSCDomainSelection.vue'
 import GSCDomainSelector from '../components/GSCDomainSelector.vue'
+import EditProject from '../components/EditProject.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -54,6 +55,13 @@ const router = createRouter({
       path: '/gsc-domain-selector',
       name: 'GSCDomainSelector',
       component: GSCDomainSelector
+    },
+    {
+      path: '/edit-project/:id',
+      name: 'Edit Project',
+      component: EditProject,
+      props: route => ({ projectId: parseInt(route.params.id) }),
+      meta: { title: 'Edit Project' }
     }
   ]
 })

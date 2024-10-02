@@ -27,7 +27,10 @@ from database import (
     get_gsc_credentials_from_db,
     create_gsc_data_table,
     add_gsc_data_by_keyword_id,
-    update_search_volume_if_needed
+    update_search_volume_if_needed,
+    update_project_in_db,
+    get_project_by_id,
+    add_project
 )
 import json
 from datetime import datetime, timedelta, timezone
@@ -48,6 +51,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from gsc_auth import create_auth_flow
+import random
 
 
 gsc_credentials = None
@@ -82,16 +86,19 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+    )
 
 # Pydantic models
 class ProjectBase(BaseModel):
     name: str
     domain: str
+    branded_terms: Optional[str] = None
+    conversion_rate: Optional[float] = None
+    conversion_value: Optional[float] = None
 
 class Project(ProjectBase):
     id: int
-    user_id: int
+    user_id: Optional[int] = None
 
 class KeywordBase(BaseModel):
     keyword: str
@@ -822,9 +829,9 @@ async def get_projects():
 
 @app.post("/api/projects", response_model=Project)
 async def create_project(project: ProjectBase):
-    # Use a placeholder user ID (e.g., 1) for now
-    user_id = 1
-    project_id = add_project(project.name, project.domain, user_id)
+    user_id = 1  # Use a placeholder user ID for now
+    project_id = add_project(project.name, project.domain, project.branded_terms, 
+                             project.conversion_rate, project.conversion_value, user_id)
     return {"id": project_id, "user_id": user_id, **project.dict()}
 
 @app.get("/api/projects/{project_id}/keywords")
@@ -839,14 +846,14 @@ async def get_keywords(project_id: int):
 async def create_keyword(project_id: int, keyword: KeywordBase):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO keywords (project_id, keyword, search_volume, last_volume_update) VALUES (?, ?, NULL, NULL)',
+    cursor.execute('INSERT INTO keywords (project_id, keyword, active, search_volume, last_volume_update) VALUES (?, ?, 1, NULL, NULL)',
                    (project_id, keyword.keyword))
     keyword_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return {"id": keyword_id, "project_id": project_id, **keyword.dict()}
 
-CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
+CONCURRENT_REQUESTS = 3  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
 async def fetch_serp_data_endpoint(project_id: int, request: SerpDataRequest = Body(None)):
@@ -1017,13 +1024,32 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
         return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
     raise HTTPException(status_code=404, detail="Keyword not found")
 
+async def fetch_with_retry(session, url, params, max_retries=3, base_delay=1):
+    for attempt in range(max_retries):
+        try:
+            async with session.get(url, params=params) as response:
+                if response.status == 403:
+                    raise HTTPException(status_code=403, detail="SpaceSERP API concurrency limit reached")
+                return await response.json()
+        except HTTPException as e:
+            if e.status_code == 403 and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(delay)
+            else:
+                raise
+
 async def fetch_serp_data(keyword):
-    await asyncio.sleep(0.1)  # Add a small delay to avoid overwhelming the API
     url = "https://api.spaceserp.com/google/search"
     params = {
         "apiKey": SPACESERP_API_KEY,
         "q": keyword,
-        "location": "Midtown Manhattan,New York,United States",
+        # "location": "Midtown Manhattan,New York,United States",
         "domain": "google.com",
         "gl": "us",
         "hl": "en",
@@ -1033,8 +1059,7 @@ async def fetch_serp_data(keyword):
         "pageNumber": 1
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as response:
-            return await response.json()
+        return await fetch_with_retry(session, url, params)
 
 def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
@@ -1448,6 +1473,9 @@ async def get_share_of_voice(
             lineChartData=line_chart_data,
             donutChartData=donut_chart_data
         )
+    except HTTPException as he:
+        # Re-raise HTTPException without modification
+        raise he
     except Exception as e:
         logging.exception("An error occurred while processing Share of Voice request")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1605,5 +1633,27 @@ async def fetch_gsc_data_for_keyword(project_id, keyword):
     except Exception as e:
         logging.error(f"Error fetching GSC data for keyword '{keyword['keyword']}': {str(e)}")
     
+@app.put("/api/projects/{project_id}", response_model=Project)
+async def update_project(project_id: int, project: ProjectBase):
+    updated_project = update_project_in_db(project_id, project.dict())
+    if updated_project:
+        return updated_project
+    raise HTTPException(status_code=404, detail="Project not found")
+
+@app.get("/api/projects/{project_id}", response_model=Project)
+async def get_project(project_id: int):
+    try:
+        project = get_project_by_id(project_id)
+        if project:
+            # Ensure all fields from the Project model are present
+            for field in Project.__fields__:
+                if field not in project:
+                    project[field] = None
+            return Project(**project)
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        logging.error(f"Error in get_project endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5001, reload=True)

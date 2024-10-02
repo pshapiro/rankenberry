@@ -29,7 +29,6 @@
               type="date"
               v-model="dateRange.start"
               class="input"
-              @change="updateDateRange"
             />
           </div>
           <div class="control">
@@ -37,7 +36,6 @@
               type="date"
               v-model="dateRange.end"
               class="input"
-              @change="updateDateRange"
             />
           </div>
         </div>
@@ -333,6 +331,19 @@ const filteredRankData = computed(() => {
     );
   }
 
+  // Apply date range filter
+  if (dateRange.value.start && dateRange.value.end) {
+    const startDate = new Date(dateRange.value.start);
+    const endDate = new Date(dateRange.value.end);
+    endDate.setHours(23, 59, 59, 999); // Include the entire end date
+
+    filtered = filtered.filter(item => {
+      const itemDate = new Date(item.date);
+      return itemDate >= startDate && itemDate <= endDate;
+    });
+  }
+
+  // Map to include GSC data
   return filtered.map(item => {
     const gscDataArray = gscDataMap.value[item.keyword_id] || [];
     const itemDateStr = item.date.split('T')[0]; // 'YYYY-MM-DD'
@@ -461,12 +472,11 @@ const goToPage = (page) => {
 }
 
 watch([selectedProject, selectedTag, dateRange], async () => {
-  console.log('Date range changed:', dateRange.value)
-  currentPage.value = 1
-  await loadKeywordTags()
-  await fetchGscData()
-})
-
+  console.log('Date range changed:', dateRange.value);
+  currentPage.value = 1;
+  await loadKeywordTags();
+  await fetchGscData();
+});
 
 const fetchSerpData = async () => {
   isLoading.value = true

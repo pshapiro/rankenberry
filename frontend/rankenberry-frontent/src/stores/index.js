@@ -23,9 +23,15 @@ export const useMainStore = defineStore('main', {
         throw error;
       }
     },    
-    async addProject(name, domain) {
+    async addProject(name, domain, brandedTerms, conversionRate, conversionValue) {
       try {
-        const response = await axios.post(`${API_URL}/projects`, { name, domain })
+        const response = await axios.post(`${API_URL}/projects`, { 
+          name, 
+          domain, 
+          branded_terms: brandedTerms, 
+          conversion_rate: parseFloat(conversionRate),
+          conversion_value: parseFloat(conversionValue)
+        })
         this.projects.push(response.data)
         return response.data
       } catch (error) {
@@ -393,6 +399,42 @@ export const useMainStore = defineStore('main', {
     },
     async setAuthenticated(value) {
       this.isAuthenticated = value
+    },
+    async getProject(projectId) {
+      try {
+        const response = await axios.get(`${API_URL}/projects/${projectId}`);
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching project:', error);
+        if (error.response) {
+          // The request was made and the server responded with a status code
+          // that falls out of the range of 2xx
+          console.error('Error response:', error.response.data);
+          console.error('Error status:', error.response.status);
+        } else if (error.request) {
+          // The request was made but no response was received
+          console.error('Error request:', error.request);
+        } else {
+          // Something happened in setting up the request that triggered an Error
+          console.error('Error message:', error.message);
+        }
+        throw error;
+      }
+    },
+
+    async updateProject(projectId, projectData) {
+      try {
+        const response = await axios.put(`${API_URL}/projects/${projectId}`, projectData)
+        const updatedProject = response.data
+        const index = this.projects.findIndex(p => p.id === updatedProject.id)
+        if (index !== -1) {
+          this.projects[index] = updatedProject
+        }
+        return updatedProject
+      } catch (error) {
+        console.error('Error updating project:', error)
+        throw error
+      }
     }
   }
 })
