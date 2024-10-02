@@ -45,6 +45,7 @@ def init_db():
                   domain TEXT NOT NULL,
                   branded_terms TEXT,
                   conversion_rate REAL,
+                  conversion_value REAL,
                   active INTEGER DEFAULT 1,
                   user_id INTEGER,
                   FOREIGN KEY (user_id) REFERENCES users (id))''')
@@ -73,13 +74,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_project(name, domain, branded_terms, conversion_rate, user_id):
+def add_project(name, domain, branded_terms, conversion_rate, conversion_value, user_id):
     logging.info(f"Adding project to database: {name}, {domain}, user_id: {user_id}")
     try:
         conn = sqlite3.connect('seo_rank_tracker.db')
         c = conn.cursor()
-        c.execute("INSERT INTO projects (name, domain, branded_terms, conversion_rate, user_id) VALUES (?, ?, ?, ?, ?)", 
-                  (name, domain, branded_terms, conversion_rate, user_id))
+        c.execute("INSERT INTO projects (name, domain, branded_terms, conversion_rate, conversion_value, user_id) VALUES (?, ?, ?, ?, ?, ?)", 
+                  (name, domain, branded_terms, conversion_rate, conversion_value, user_id))
         project_id = c.lastrowid
         conn.commit()
         logging.info(f"Project added successfully with ID: {project_id}")
@@ -382,14 +383,13 @@ def update_project_in_db(project_id, project_data):
     try:
         c.execute("""
             UPDATE projects
-            SET name = ?, domain = ?, branded_terms = ?, conversion_rate = ?
+            SET name = ?, domain = ?, branded_terms = ?, conversion_rate = ?, conversion_value = ?
             WHERE id = ?
-        """, (project_data['name'], project_data['domain'], project_data['branded_terms'], project_data['conversion_rate'], project_id))
+        """, (project_data['name'], project_data['domain'], project_data['branded_terms'], 
+              project_data['conversion_rate'], project_data['conversion_value'], project_id))
         conn.commit()
         if c.rowcount > 0:
-            c.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
-            updated_project = c.fetchone()
-            return dict(updated_project)
+            return get_project_by_id(project_id)
         return None
     finally:
         conn.close()
@@ -409,6 +409,8 @@ def get_project_by_id(project_id):
             select_columns.append("branded_terms")
         if "conversion_rate" in columns:
             select_columns.append("conversion_rate")
+        if "conversion_value" in columns:
+            select_columns.append("conversion_value")
         if "user_id" in columns:
             select_columns.append("user_id")
         
@@ -430,6 +432,9 @@ def get_project_by_id(project_id):
                 column_index += 1
             if "conversion_rate" in columns and column_index < len(project):
                 result["conversion_rate"] = project[column_index]
+                column_index += 1
+            if "conversion_value" in columns and column_index < len(project):
+                result["conversion_value"] = project[column_index]
                 column_index += 1
             if "user_id" in columns and column_index < len(project):
                 result["user_id"] = project[column_index]

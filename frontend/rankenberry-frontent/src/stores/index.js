@@ -23,9 +23,15 @@ export const useMainStore = defineStore('main', {
         throw error;
       }
     },    
-    async addProject(name, domain) {
+    async addProject(name, domain, brandedTerms, conversionRate, conversionValue) {
       try {
-        const response = await axios.post(`${API_URL}/projects`, { name, domain })
+        const response = await axios.post(`${API_URL}/projects`, { 
+          name, 
+          domain, 
+          branded_terms: brandedTerms, 
+          conversion_rate: parseFloat(conversionRate),
+          conversion_value: parseFloat(conversionValue)
+        })
         this.projects.push(response.data)
         return response.data
       } catch (error) {

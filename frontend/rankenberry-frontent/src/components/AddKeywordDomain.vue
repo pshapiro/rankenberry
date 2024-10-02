@@ -27,6 +27,12 @@
         </div>
       </div>
       <div class="field">
+        <label class="label">Conversion Value</label>
+        <div class="control">
+          <input v-model="conversionValue" class="input" type="number" min="0" step="0.01" placeholder="Enter conversion value">
+        </div>
+      </div>
+      <div class="field">
         <div class="control">
           <button type="submit" class="button is-primary">Add Project</button>
         </div>
@@ -89,6 +95,7 @@ const projectName = ref('')
 const domain = ref('')
 const brandedTerms = ref('')
 const conversionRate = ref('')
+const conversionValue = ref('')
 const selectedProject = ref('')
 const keywords = ref('')
 const message = ref('')
@@ -106,12 +113,19 @@ onMounted(async () => {
 
 const addProject = async () => {
   try {
-    const newProject = await store.addProject(projectName.value, domain.value, brandedTerms.value, conversionRate.value)
+    const newProject = await store.addProject(
+      projectName.value, 
+      domain.value, 
+      brandedTerms.value, 
+      conversionRate.value,
+      conversionValue.value
+    )
     message.value = `Project "${newProject.name}" added successfully!`
     projectName.value = ''
     domain.value = ''
     brandedTerms.value = ''
     conversionRate.value = ''
+    conversionValue.value = ''
   } catch (error) {
     message.value = `Error adding project: ${error.message}`
     console.error('Error adding project:', error)

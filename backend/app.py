@@ -29,7 +29,8 @@ from database import (
     add_gsc_data_by_keyword_id,
     update_search_volume_if_needed,
     update_project_in_db,
-    get_project_by_id
+    get_project_by_id,
+    add_project
 )
 import json
 from datetime import datetime, timedelta, timezone
@@ -93,6 +94,7 @@ class ProjectBase(BaseModel):
     domain: str
     branded_terms: Optional[str] = None
     conversion_rate: Optional[float] = None
+    conversion_value: Optional[float] = None
 
 class Project(ProjectBase):
     id: int
@@ -828,7 +830,8 @@ async def get_projects():
 @app.post("/api/projects", response_model=Project)
 async def create_project(project: ProjectBase):
     user_id = 1  # Use a placeholder user ID for now
-    project_id = add_project(project.name, project.domain, project.branded_terms, project.conversion_rate, user_id)
+    project_id = add_project(project.name, project.domain, project.branded_terms, 
+                             project.conversion_rate, project.conversion_value, user_id)
     return {"id": project_id, "user_id": user_id, **project.dict()}
 
 @app.get("/api/projects/{project_id}/keywords")
