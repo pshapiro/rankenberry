@@ -50,6 +50,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from gsc_auth import create_auth_flow
+import random
 
 
 gsc_credentials = None
@@ -842,14 +843,14 @@ async def get_keywords(project_id: int):
 async def create_keyword(project_id: int, keyword: KeywordBase):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO keywords (project_id, keyword, search_volume, last_volume_update) VALUES (?, ?, NULL, NULL)',
+    cursor.execute('INSERT INTO keywords (project_id, keyword, active, search_volume, last_volume_update) VALUES (?, ?, 1, NULL, NULL)',
                    (project_id, keyword.keyword))
     keyword_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return {"id": keyword_id, "project_id": project_id, **keyword.dict()}
 
-CONCURRENT_REQUESTS = 5  # Adjust this number based on API limits and your server capacity
+CONCURRENT_REQUESTS = 3  # Adjust this number based on API limits and your server capacity
 
 @app.post("/api/fetch-serp-data/{project_id}")
 async def fetch_serp_data_endpoint(project_id: int, request: SerpDataRequest = Body(None)):
@@ -1020,13 +1021,32 @@ async def fetch_and_store_single_serp_data(keyword_id: int):
         return {"message": f"SERP data fetched and stored successfully for keyword ID {keyword_id}"}
     raise HTTPException(status_code=404, detail="Keyword not found")
 
+async def fetch_with_retry(session, url, params, max_retries=3, base_delay=1):
+    for attempt in range(max_retries):
+        try:
+            async with session.get(url, params=params) as response:
+                if response.status == 403:
+                    raise HTTPException(status_code=403, detail="SpaceSERP API concurrency limit reached")
+                return await response.json()
+        except HTTPException as e:
+            if e.status_code == 403 and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                await asyncio.sleep(delay)
+            else:
+                raise
+
 async def fetch_serp_data(keyword):
-    await asyncio.sleep(0.1)  # Add a small delay to avoid overwhelming the API
     url = "https://api.spaceserp.com/google/search"
     params = {
         "apiKey": SPACESERP_API_KEY,
         "q": keyword,
-        "location": "Midtown Manhattan,New York,United States",
+        # "location": "Midtown Manhattan,New York,United States",
         "domain": "google.com",
         "gl": "us",
         "hl": "en",
@@ -1036,8 +1056,7 @@ async def fetch_serp_data(keyword):
         "pageNumber": 1
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params) as response:
-            return await response.json()
+        return await fetch_with_retry(session, url, params)
 
 def add_serp_data(keyword_id, serp_data, search_volume):
     conn = get_db_connection()
