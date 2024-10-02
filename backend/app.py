@@ -1473,6 +1473,9 @@ async def get_share_of_voice(
             lineChartData=line_chart_data,
             donutChartData=donut_chart_data
         )
+    except HTTPException as he:
+        # Re-raise HTTPException without modification
+        raise he
     except Exception as e:
         logging.exception("An error occurred while processing Share of Voice request")
         raise HTTPException(status_code=500, detail=str(e))

@@ -233,7 +233,7 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
         FROM serp_data s
         JOIN keywords k ON s.keyword_id = k.id
         JOIN projects p ON k.project_id = p.id
-        WHERE k.project_id = ? AND s.date BETWEEN ? AND ? AND k.active = 1
+        WHERE k.project_id = ? AND s.date BETWEEN ? AND ?
     '''
     params = (project_id, start_date, end_date)
 
