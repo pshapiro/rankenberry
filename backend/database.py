@@ -55,9 +55,9 @@ def init_db():
                   project_id INTEGER,
                   keyword TEXT NOT NULL,
                   active INTEGER DEFAULT 1,
+                  search_volume INTEGER DEFAULT 0,
+                  last_volume_update TEXT,
                   FOREIGN KEY (project_id) REFERENCES projects (id))''')
-
-    c.execute('ALTER TABLE keywords ADD COLUMN active INTEGER DEFAULT 1')
 
     c.execute('''CREATE TABLE IF NOT EXISTS serp_data
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,8 +68,16 @@ def init_db():
                   search_volume INTEGER,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
-    c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
-    c.execute('''ALTER TABLE keywords ADD COLUMN last_volume_update TEXT''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ctr_cache (
+            project_id INTEGER PRIMARY KEY,
+            avg_ctr_per_position TEXT NOT NULL,
+            last_updated TEXT NOT NULL,
+            date_range_start TEXT NOT NULL,
+            date_range_end TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects (id)
+        )
+    ''')
 
     conn.commit()
     conn.close()
@@ -187,22 +195,26 @@ def add_gsc_domain(user_id, domain, project_id):
     conn.close()
     return domain_id
 
-def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position):
+def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position, query, page):
+    conn = get_db_connection()
+    c = conn.cursor()
     # Only proceed if the keyword exists in the database
     c.execute("SELECT id FROM keywords WHERE project_id = ? AND keyword = ?", (project_id, keyword))
     result = c.fetchone()
     if result:
         keyword_id = result[0]
         # Insert the GSC data
-        c.execute('''INSERT OR REPLACE INTO gsc_data 
-                     (keyword_id, date, clicks, impressions, ctr, position)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (keyword_id, date, clicks, impressions, ctr, position))
+        c.execute('''
+            INSERT INTO gsc_data 
+            (keyword_id, date, clicks, impressions, ctr, position, query, page)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (keyword_id, date, clicks, impressions, ctr, position, query, page))
         conn.commit()
         logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
     else:
         # Keyword not being tracked; ignore
         logging.info(f"Keyword '{keyword}' not found in project_id {project_id}. Skipping GSC data.")
+    conn.close()
 
 def get_gsc_domains(user_id):
     conn = get_db_connection()
@@ -259,15 +271,17 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
 def create_gsc_data_table():
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  keyword_id INTEGER,
-                  date TEXT,
-                  clicks INTEGER,
-                  impressions INTEGER,
-                  ctr REAL,
-                  position REAL,
-                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyword_id INTEGER,
+                date TEXT NOT NULL,
+                clicks INTEGER,
+                impressions INTEGER,
+                ctr REAL,
+                position REAL,
+                query TEXT,
+                page TEXT,
+                FOREIGN KEY (keyword_id) REFERENCES keywords (id)''')
     c.execute('''CREATE TABLE IF NOT EXISTS gsc_credentials
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   project_id INTEGER UNIQUE,
@@ -342,16 +356,20 @@ async def backfill_gsc_data(project_id, keyword_id, keyword):
         gsc_data = await fetch_gsc_data(project_id, keyword, start_date, end_date)
         add_gsc_data(project_id, keyword_id, gsc_data)
     
-def add_gsc_data_by_keyword_id(keyword_id, date, clicks, impressions, ctr, position):
+def add_gsc_data_by_keyword_id(keyword_id, date, clicks, impressions, ctr, position, query, page):
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO gsc_data 
-                 (keyword_id, date, clicks, impressions, ctr, position)
-                 VALUES (?, ?, ?, ?, ?, ?)''',
-              (keyword_id, date, clicks, impressions, ctr, position))
-    conn.commit()
-    conn.close()
-    logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+    try:
+        c.execute('''
+            INSERT INTO gsc_data (keyword_id, date, clicks, impressions, ctr, position, query, page)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (keyword_id, date, clicks, impressions, ctr, position, query, page))
+        conn.commit()
+        logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+    except Exception as e:
+        logging.error(f"Error adding GSC data for keyword_id {keyword_id}: {str(e)}")
+    finally:
+        conn.close()
 
 async def update_search_volume_if_needed(keyword):
     conn = get_db_connection()
@@ -449,3 +467,45 @@ def get_project_by_id(project_id):
         raise
     finally:
         conn.close()
+
+def get_ctr_cache(project_id: int) -> Optional[Dict]:
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT avg_ctr_per_position, last_updated, date_range_start, date_range_end
+        FROM ctr_cache
+        WHERE project_id = ?
+    ''', (project_id,))
+    cache_entry = c.fetchone()
+    conn.close()
+    
+    if cache_entry:
+        parsed_last_updated = parser.parse(cache_entry["last_updated"])
+        # Ensure the datetime is timezone-aware. If not, set it to UTC.
+        if parsed_last_updated.tzinfo is None:
+            parsed_last_updated = parsed_last_updated.replace(tzinfo=timezone.utc)
+        
+        return {
+            "avg_ctr_per_position": json.loads(cache_entry["avg_ctr_per_position"]),
+            "last_updated": parsed_last_updated,
+            "date_range_start": cache_entry["date_range_start"],
+            "date_range_end": cache_entry["date_range_end"]
+        }
+    return None
+
+def set_ctr_cache(project_id: int, avg_ctr_per_position: Dict, last_updated: datetime, start_date: str, end_date: str):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        REPLACE INTO ctr_cache (project_id, avg_ctr_per_position, last_updated, date_range_start, date_range_end)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        project_id,
+        json.dumps(avg_ctr_per_position),
+        last_updated.isoformat(),
+        start_date,
+        end_date
+    ))
+    last_updated.isoformat()
+    conn.commit()
+    conn.close()
