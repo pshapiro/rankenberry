@@ -373,19 +373,25 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    async fetchGscData(projectId, startDate, endDate) {
+    async fetchGscData({ project_id = null, domain_id = null, start_date, end_date }) {
+      if (!project_id && !domain_id) {
+        console.warn('No project_id or domain_id provided. Skipping GSC data fetch.');
+        return;
+      }
       try {
-        const response = await axios.get(`${API_URL}/gsc-data`, {
-          params: { project_id: projectId, start_date: startDate, end_date: endDate }
-        });
-        this.gscData = response.data;
+        const params = { start_date, end_date };
+        if (project_id) params.project_id = project_id;
+        if (domain_id) params.domain_id = domain_id;
+    
+        const response = await axios.get(`${API_URL}/gsc-data`, { params });
+        this.gscData = response.data.data;
         console.log('Fetched GSC data:', this.gscData);
         return this.gscData;
       } catch (error) {
         console.error('Error fetching GSC data:', error);
         throw error;
       }
-    },
+    },    
 
     async fetchCombinedData(projectId, startDate, endDate) {
       try {

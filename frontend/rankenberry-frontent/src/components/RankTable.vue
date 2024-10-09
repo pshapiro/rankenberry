@@ -63,7 +63,7 @@
 
     <!-- View Details Section -->
     <div class="box mt-4 mb-4">
-      <h3 class="title is-4">View Details</h3>
+      <h3 class="title is-4">Summary</h3>
       <div class="columns">
         <div class="column">
           <p><strong>Total Keywords:</strong> {{ latestRankData.length }}</p>
@@ -93,7 +93,7 @@
           <th>Rank</th>
           <th>Estimated Business Impact</th>
           <th>Search Volume</th>
-          <th>Change</th>
+          <th>Rank Change</th>
           <th>GSC Avg Position</th>
           <th>GSC Clicks</th>
           <th>GSC Impressions</th>
@@ -116,13 +116,14 @@
           <!-- Rank -->
           <td>{{ formatRank(item.rank) }}</td>
 
-          <!-- Estimated Business Impact -->
+          <!-- Estimated Business Impact Column -->
           <td>
             {{ formatCurrency(item.estimated_business_impact) }}
-            <span v-if="item.estimated_business_impact_change !== 0">
+            <span v-if="typeof item.estimated_business_impact_change === 'number' && !isNaN(item.estimated_business_impact_change)">
               (<span :class="{
                 'has-text-success': item.estimated_business_impact_change > 0,
-                'has-text-danger': item.estimated_business_impact_change < 0
+                'has-text-danger': item.estimated_business_impact_change < 0,
+                'has-text-grey': item.estimated_business_impact_change === 0
               }">
                 {{ formatChange(item.estimated_business_impact_change) }}
               </span>)
@@ -131,45 +132,33 @@
 
           <!-- Search Volume -->
           <td>{{ item.search_volume === null ? '-' : formatNumber(item.search_volume) }}</td>
-
-          <!-- Change (Rank Change with Arrows) -->
+          <!-- Rank Change Column -->
           <td>
-            <span v-if="rankChanges[item.keyword_id] && rankChanges[item.keyword_id].length > 1">
-              <span
-                v-if="(item.rank === null || item.rank === -1) && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
-                class="has-text-danger"
-              >
-                ▼ {{ rankChanges[item.keyword_id][1].rank }}
-              </span>
-              <span
-                v-else-if="(item.rank !== null && item.rank !== -1) && (rankChanges[item.keyword_id][1].rank === null || rankChanges[item.keyword_id][1].rank === -1)"
-                class="has-text-success"
-              >
-                ▲ {{ item.rank }}
-              </span>
-              <span
-                v-else-if="item.rank !== null && item.rank !== -1 && rankChanges[item.keyword_id][1].rank !== null && rankChanges[item.keyword_id][1].rank !== -1"
-              >
-                <span v-if="item.rank < rankChanges[item.keyword_id][1].rank" class="has-text-success">
-                  ▲ {{ rankChanges[item.keyword_id][1].rank - item.rank }}
-                </span>
-                <span v-else-if="item.rank > rankChanges[item.keyword_id][1].rank" class="has-text-danger">
-                  ▼ {{ item.rank - rankChanges[item.keyword_id][1].rank }}
-                </span>
+            <span v-if="typeof item.rankChange === 'number' && !isNaN(item.rankChange)">
+              <span :class="{
+                'has-text-success': item.rankChange > 0,
+                'has-text-danger': item.rankChange < 0,
+                'has-text-grey': item.rankChange === 0
+              }">
+                <span v-if="item.rankChange > 0">▲ {{ Math.abs(item.rankChange) }}</span>
+                <span v-else-if="item.rankChange < 0">▼ {{ Math.abs(item.rankChange) }}</span>
                 <span v-else>-</span>
               </span>
-              <span v-else>-</span>
             </span>
             <span v-else>-</span>
           </td>
 
-          <!-- GSC Avg Position -->
+          <!-- GSC Avg Position Column -->
           <td>
-            <span v-if="item.gscDataForDate">
+            <span v-if="item.gscDataForDate && typeof item.gscDataForDate.position === 'number'">
               {{ item.gscDataForDate.position.toFixed(2) }}
+              <span v-if="item.dataSourceDate && item.dataSourceDate !== formatDate(item.date)">
+                <em>(Derived from {{ formatDate(item.dataSourceDate) }})</em>
+              </span>
             </span>
             <span v-else>
-              - (keyword_id: {{ item.keyword_id }}, date: {{ formatDate(item.date) }})
+              -
+              <em>(keyword_id: {{ item.keyword_id }}, date: {{ formatDate(item.date) }})</em>
             </span>
           </td>
 
@@ -191,7 +180,7 @@
 
           <!-- GSC CTR -->
           <td>
-            <span v-if="item.gscDataForDate">
+            <span v-if="item.gscDataForDate && typeof item.gscDataForDate.ctr === 'number'">
               {{ (item.gscDataForDate.ctr * 100).toFixed(2) }}%
             </span>
             <span v-else>-</span>
@@ -232,18 +221,18 @@
       <p>Loading data...</p>
     </div>
 
-    <!-- Pagination Controls -->
-    <nav class="pagination is-centered" role="navigation" aria-label="pagination">
-      <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
-      <a class="pagination-next" @click="nextPage" :disabled="currentPage === totalPages">Next page</a>
-      <ul class="pagination-list">
-        <li v-for="page in displayedPages" :key="page">
-          <a class="pagination-link" :class="{ 'is-current': page === currentPage }" @click="goToPage(page)">
-            {{ page }}
-          </a>
-        </li>
-      </ul>
-    </nav>
+  <!-- Pagination Controls -->
+  <nav class="pagination is-centered" role="navigation" aria-label="pagination">
+    <a class="pagination-previous" @click="previousPage" :disabled="currentPage === 1">Previous</a>
+    <a class="pagination-next" @click="nextPage" :disabled="currentPage === totalPages">Next page</a>
+    <ul class="pagination-list">
+      <li v-for="page in displayedPages" :key="page">
+        <a class="pagination-link" :class="{ 'is-current': page === currentPage }" @click="goToPage(page)">
+          {{ page }}
+        </a>
+      </li>
+    </ul>
+  </nav>
 
     <!-- SERP Details Modal -->
     <div class="modal" :class="{ 'is-active': selectedSerpData }">
@@ -322,21 +311,15 @@ const dateRange = ref({
   start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   end: new Date().toISOString().split('T')[0],
 })
+// const dateRange = ref({
+//   start: '2020-01-01', // or any date that includes all your data
+//   end: new Date().toISOString().split('T')[0],
+// });
 
 // Additional reactive variables
 const isShareOfVoiceModalOpen = ref(false)
 const dataLoaded = ref(false)
 const gscDataMap = ref({})
-
-// Fetch initial data on component mount
-onMounted(async () => {
-  await store.fetchProjects()
-  await store.fetchRankData()
-  await store.fetchTags()
-  await loadKeywordTags()
-  await fetchGscData()
-  dataLoaded.value = true
-})
 
 // Load tags for each keyword
 const loadKeywordTags = async () => {
@@ -345,7 +328,7 @@ const loadKeywordTags = async () => {
   }
 }
 
-// Computed property to filter rank data based on selected filters
+// Computed property to filter and sort rank data based on selected filters
 const filteredRankData = computed(() => {
   let filtered = rankData.value
 
@@ -365,11 +348,20 @@ const filteredRankData = computed(() => {
   if (dateRange.value.start && dateRange.value.end) {
     const start = new Date(dateRange.value.start)
     const end = new Date(dateRange.value.end)
+    end.setHours(23, 59, 59, 999) // Include the entire end date
+    console.log('Date Range Start:', start)
+    console.log('Date Range End:', end)
     filtered = filtered.filter(item => {
       const itemDate = new Date(item.date)
-      return itemDate >= start && itemDate <= end
+      const isInRange = itemDate >= start && itemDate <= end
+      console.log(`Item Date ${itemDate} is in range:`, isInRange)
+      return isInRange
     })
   }
+
+  // Sort descending by date
+  filtered = filtered.sort((a, b) => new Date(b.date) - new Date(a.date))
+  console.log('filteredRankData length:', filtered.length);
 
   return filtered
 })
@@ -387,45 +379,26 @@ const latestRankData = computed(() => {
     }
   })
 
+  console.log('latestRankData length:', Array.from(keywordMap.values()).length);
   return Array.from(keywordMap.values())
-})
-
-// Pagination
-const paginatedRankData = computed(() => {
-  const startIndex = (currentPage.value - 1) * itemsPerPage
-  const endIndex = startIndex + itemsPerPage
-  return filteredRankData.value.slice(startIndex, endIndex)
-})
-
-const totalPages = computed(() => Math.ceil(filteredRankData.value.length / itemsPerPage))
-
-const displayedPages = computed(() => {
-  const range = 2
-  let start = Math.max(1, currentPage.value - range)
-  let end = Math.min(totalPages.value, currentPage.value + range)
-
-  if (start > 1) {
-    start = Math.max(1, end - range * 2)
-  }
-  if (end < totalPages.value) {
-    end = Math.min(totalPages.value, start + range * 2)
-  }
-
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i)
 })
 
 // Rank Changes for indicators
 const rankChanges = computed(() => {
-  const changes = {}
+  const changes = {};
   filteredRankData.value.forEach(item => {
     if (!changes[item.keyword_id]) {
-      changes[item.keyword_id] = [item]
-    } else if (changes[item.keyword_id].length < 2) {
-      changes[item.keyword_id].push(item)
+      changes[item.keyword_id] = [item];
+    } else {
+      changes[item.keyword_id].push(item);
     }
-  })
-  return changes
-})
+  });
+  // Ensure the changes are sorted by date in descending order
+  Object.keys(changes).forEach(keywordId => {
+    changes[keywordId].sort((a, b) => new Date(b.date) - new Date(a.date));
+  });
+  return changes;
+});
 
 // Computed statistics
 const averageRank = computed(() => {
@@ -484,11 +457,9 @@ const goToPage = (page) => {
 }
 
 // Watchers to refetch data on filter changes
-watch([selectedProject, selectedTag, dateRange], async () => {
+watch([selectedProject, selectedTag, dateRange], () => {
   console.log('Filters changed. Current Page reset to 1.')
   currentPage.value = 1
-  await loadKeywordTags()
-  await fetchGscData()
 })
 
 // Fetch SERP Data
@@ -553,15 +524,15 @@ const fetchSingleSerpData = async (item) => {
 
 // Utility Functions
 const formatCurrency = (value) => {
-  if (typeof value !== 'number') return '-'
+  if (typeof value !== 'number' || isNaN(value)) return '-';
   const formatter = new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD', // Adjust currency code as needed
+    currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })
-  return formatter.format(value)
-}
+  });
+  return formatter.format(value);
+};
 
 const formatNumber = (value) => {
   if (typeof value !== 'number') return '-'
@@ -569,15 +540,18 @@ const formatNumber = (value) => {
 }
 
 const formatDate = (dateString) => {
-  if (!dateString) return 'N/A'
-  const date = new Date(dateString)
-  return isNaN(date.getTime()) ? 'Invalid Date' : date.toLocaleDateString()
-}
+  if (!dateString) return '-';
+  const options = { year: 'numeric', month: 'short', day: 'numeric' };
+  return new Date(dateString).toLocaleDateString(undefined, options);
+};
 
-const formatChange = (change) => {
-  const sign = change > 0 ? '+' : '-'
-  return `${sign}${formatCurrency(Math.abs(change))}`
-}
+const formatChange = (value) => {
+  if (typeof value !== 'number' || isNaN(value)) {
+    return '-';
+  }
+  const formatted = `${value > 0 ? '+' : ''}${formatCurrency(value)}`;
+  return formatted;
+};
 
 const formatRank = (rank) => {
   return rank === null || rank === -1 ? '-' : rank
@@ -678,15 +652,16 @@ const closeShareOfVoiceModal = () => {
 
 // Fetch GSC Data
 const fetchGscData = async () => {
-  if (dateRange.value.start && dateRange.value.end) {
+  if (dateRange.value.start && dateRange.value.end && selectedProject.value) {
     try {
-      const gscData = await store.fetchGscData(
-        selectedProject.value ? parseInt(selectedProject.value) : null,
-        dateRange.value.start,
-        dateRange.value.end
-      );
+      const filters = {
+        project_id: parseInt(selectedProject.value),
+        start_date: dateRange.value.start,
+        end_date: dateRange.value.end,
+      };
+      const gscData = await store.fetchGscData(filters);
       console.log('Fetched GSC data:', gscData);
-      
+
       // Create a map of GSC data by keyword_id and date
       const gscDataMap = {};
       gscData.forEach(item => {
@@ -696,7 +671,7 @@ const fetchGscData = async () => {
         gscDataMap[item.keyword_id][item.date] = item;
       });
       console.log('GSC data map:', gscDataMap);
-      
+
       // Associate GSC data with rank data
       rankData.value = rankData.value.map(item => {
         const itemDate = new Date(item.date).toISOString().split('T')[0];
@@ -707,21 +682,211 @@ const fetchGscData = async () => {
           gscDataForDate: gscDataForDate || null
         };
       });
-      
+
       console.log('Updated rank data with GSC:', rankData.value);
     } catch (error) {
       console.error('Error fetching GSC data:', error);
     }
+  } else {
+    console.warn('No project selected. Skipping GSC data fetch.');
   }
 };
 
+const latestRankDataWithChange = computed(() => {
+  const keywordMap = new Map();
+
+  filteredRankData.value.forEach(item => {
+    const keywordId = item.keyword_id;
+    if (!keywordMap.has(keywordId) || new Date(item.date) > new Date(keywordMap.get(keywordId).date)) {
+      keywordMap.set(keywordId, item);
+    }
+  });
+
+  const result = Array.from(keywordMap.values()).map(item => {
+    const keywordId = item.keyword_id;
+    const changes = rankChanges.value[keywordId];
+    let estimated_business_impact_change = null;
+    let rankChange = null;
+
+    if (changes && changes.length > 1) {
+      const previousItem = changes[1];
+      const currentImpact = item.estimated_business_impact;
+      const previousImpact = previousItem.estimated_business_impact;
+
+      if (
+        typeof currentImpact === 'number' &&
+        typeof previousImpact === 'number'
+      ) {
+        // Always calculate absolute change
+        estimated_business_impact_change = currentImpact - previousImpact;
+      }
+
+      // Calculate rank change (as before)
+      const currentRank = item.rank;
+      const previousRank = previousItem.rank;
+
+      if (
+        currentRank !== null && currentRank !== -1 &&
+        previousRank !== null && previousRank !== -1
+      ) {
+        rankChange = previousRank - currentRank;
+      } else if (
+        (currentRank === null || currentRank === -1) &&
+        previousRank !== null && previousRank !== -1
+      ) {
+        rankChange = -previousRank;
+      } else if (
+        currentRank !== null && currentRank !== -1 &&
+        (previousRank === null || previousRank === -1)
+      ) {
+        rankChange = currentRank;
+      } else {
+        rankChange = null;
+      }
+    }
+
+    return {
+      ...item,
+      estimated_business_impact_change,
+      rankChange,
+    };
+  });
+
+  return result;
+});
+
+// Pagination
+const paginatedRankData = computed(() => {
+  const startIndex = (currentPage.value - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  return filteredRankDataWithChange.value.slice(startIndex, endIndex);
+});
+
+const totalPages = computed(() => {
+  const totalItems = filteredRankDataWithChange.value.length;
+  const pages = Math.ceil(totalItems / itemsPerPage);
+  console.log('Total Items:', totalItems, 'Total Pages:', pages);
+  return pages;
+});
+
+const filteredRankDataWithChange = computed(() => {
+  const changes = {};
+
+  // Group entries by keyword and sort them by date ascending
+  filteredRankData.value.forEach(item => {
+    const keywordId = item.keyword_id;
+    if (!changes[keywordId]) {
+      changes[keywordId] = [];
+    }
+    changes[keywordId].push(item);
+  });
+
+  Object.keys(changes).forEach(keywordId => {
+    changes[keywordId].sort((a, b) => new Date(a.date) - new Date(b.date));
+  });
+
+  // Calculate rankChange and estimated_business_impact_change for each entry
+  const result = [];
+  Object.values(changes).forEach(entries => {
+    for (let i = 0; i < entries.length; i++) {
+      const currentItem = entries[i];
+      const previousItem = entries[i - 1];
+      let rankChange = null;
+      let estimated_business_impact_change = null;
+
+      if (previousItem) {
+        // Rank change calculation
+        const currentRank = currentItem.rank;
+        const previousRank = previousItem.rank;
+
+        if (
+          currentRank !== null && currentRank !== -1 &&
+          previousRank !== null && previousRank !== -1
+        ) {
+          rankChange = previousRank - currentRank;
+        } else if (
+          (currentRank === null || currentRank === -1) &&
+          previousRank !== null && previousRank !== -1
+        ) {
+          rankChange = -previousRank;
+        } else if (
+          currentRank !== null && currentRank !== -1 &&
+          (previousRank === null || previousRank === -1)
+        ) {
+          rankChange = currentRank;
+        }
+
+        // Estimated business impact change calculation
+        const currentImpact = currentItem.estimated_business_impact;
+        const previousImpact = previousItem.estimated_business_impact;
+
+        if (
+          typeof currentImpact === 'number' &&
+          typeof previousImpact === 'number'
+        ) {
+          estimated_business_impact_change = currentImpact - previousImpact;
+        }
+      }
+
+      result.push({
+        ...currentItem,
+        rankChange,
+        estimated_business_impact_change,
+      });
+    }
+  });
+
+  // **Sort the result by date descending**
+  result.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  return result;
+});
+
+// Displayed Pages for Pagination Controls
+const displayedPages = computed(() => {
+  const range = 2;
+  let start = Math.max(1, currentPage.value - range);
+  let end = Math.min(totalPages.value, currentPage.value + range);
+
+  if (end - start < range * 2) {
+    start = Math.max(1, end - range * 2);
+  }
+  if (end - start < range * 2) {
+    end = Math.min(totalPages.value, start + range * 2);
+  }
+
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+});
+
+const paginatedRankDataWithChange = computed(() => {
+  const startIndex = (currentPage.value - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  return latestRankDataWithChange.value.slice(startIndex, endIndex);
+});
+
+console.log('Total rankData entries:', rankData.value.length);
+console.log('Filtered entries:', filteredRankData.value.length);
+console.log('Unique keywords:', new Set(filteredRankData.value.map(item => item.keyword_id)).size);
+console.log('latestRankDataWithChange length:', latestRankDataWithChange.value.length);
+console.log('Filtered Rank Data with Changes:', filteredRankDataWithChange.value);
+
 onMounted(async () => {
+  await store.fetchProjects();
   await store.fetchRankData();
-  await fetchGscData();
+  await store.fetchTags();
+  await loadKeywordTags();
+
+  if (selectedProject.value) {
+    await fetchGscData();
+  }
+
+  dataLoaded.value = true;
 });
 
 watch([dateRange, selectedProject], async () => {
-  await fetchGscData();
+  if (selectedProject.value) {
+    await fetchGscData();
+  }
 });
 </script>
 

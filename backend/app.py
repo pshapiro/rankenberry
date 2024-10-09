@@ -20,10 +20,9 @@ from database import (
     add_gsc_domain,
     add_gsc_data,
     get_gsc_domains,
-    get_gsc_data,
     get_domain_by_id,
     get_projects,
-    backfill_gsc_data,
+    # backfill_gsc_data,
     update_gsc_credentials_in_db,
     get_gsc_credentials_from_db,
     create_gsc_data_table,
@@ -33,11 +32,14 @@ from database import (
     get_project_by_id,
     add_project,
     get_ctr_cache,
-    set_ctr_cache
+    set_ctr_cache,
+    get_gsc_data_by_project,
+    get_gsc_data_by_domain,
+    get_db_connection
 )
 import json
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Union, Tuple
+from typing import List, Dict, Optional, Union, Tuple, Any
 import asyncio
 from asyncio import Semaphore
 import logging
@@ -55,7 +57,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from gsc_auth import create_auth_flow
 import random
-
+from services import fetch_search_volume
 
 gsc_credentials = None
 
@@ -66,6 +68,7 @@ app = FastAPI()
 
 # Initialize the AsyncIOScheduler
 scheduler = AsyncIOScheduler()
+scheduler.start()
 
 # Ensure the scheduler is shut down gracefully
 atexit.register(lambda: scheduler.shutdown())
@@ -77,10 +80,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-# Start the scheduler
-scheduler.start()
-
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -168,59 +167,33 @@ class SchedulePullRequest(BaseModel):
     tag_id: Optional[int] = None
     frequency: str
 
-# Database functions
-def get_db_connection():
-    conn = sqlite3.connect('seo_rank_tracker.db')
-    conn.row_factory = sqlite3.Row
-    return conn
+class GSCDataForDate(BaseModel):
+    position: Optional[float]
+    clicks: Optional[int]
+    impressions: Optional[int]
+    ctr: Optional[float]
+    query: Optional[str]
+    page: Optional[str]
 
-def init_db():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS projects
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT NOT NULL,
-                  domain TEXT NOT NULL,
-                  active INTEGER DEFAULT 1,
-                  user_id INTEGER,
-                  FOREIGN KEY (user_id) REFERENCES users (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS keywords
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  project_id INTEGER,
-                  keyword TEXT NOT NULL,
-                  active INTEGER DEFAULT 1,
-                  search_volume INTEGER DEFAULT NULL,
-                  last_volume_update TEXT,
-                  FOREIGN KEY (project_id) REFERENCES projects (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS serp_data
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  keyword_id INTEGER,
-                  date TEXT NOT NULL,
-                  rank INTEGER,
-                  full_data TEXT NOT NULL,
-                  search_volume INTEGER,
-                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS tags
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT NOT NULL UNIQUE)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS keyword_tags
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  keyword_id INTEGER,
-                  tag_id INTEGER,
-                  FOREIGN KEY (keyword_id) REFERENCES keywords (id),
-                  FOREIGN KEY (tag_id) REFERENCES tags (id),
-                  UNIQUE(keyword_id, tag_id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS scheduled_pulls
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  project_id INTEGER,
-                  tag_id INTEGER,
-                  frequency TEXT,
-                  next_pull TEXT,
-                  last_run TEXT,
-                  FOREIGN KEY (project_id) REFERENCES projects (id),
-                  FOREIGN KEY (tag_id) REFERENCES tags (id))''')
-    conn.commit()
-    conn.close()
+class LastGSCData(BaseModel):
+    gscDataForDate: Optional[GSCDataForDate]
+    date: Optional[str]
+
+class RankDataEntry(BaseModel):
+    id: int
+    date: str
+    keyword: str
+    domain: str
+    rank: int
+    keyword_id: int
+    project_id: int
+    search_volume: Optional[int]
+    estimated_business_impact: float
+    gscDataForDate: Optional[GSCDataForDate]
+    dataSourceDate: Optional[str]
+
+class RankDataResponse(BaseModel):
+    data: List[RankDataEntry]
 
 # Initialize the database
 init_db()
@@ -362,10 +335,9 @@ def get_avg_ctr_for_project_rank(project_id: int, rank: int) -> float:
         
         if result:
             avg_ctr_per_position = json.loads(result['avg_ctr_per_position'])
-            # Assuming rank positions are stored as strings in the JSON
             ctr = avg_ctr_per_position.get(str(rank), 0.0)
             logging.info(f"Retrieved CTR for project_id={project_id}, rank={rank}: {ctr}")
-            return ctr
+            return float(ctr)
         else:
             logging.warning(f"No CTR cache found for project_id={project_id}. Returning 0.0 CTR.")
             return 0.0
@@ -448,7 +420,7 @@ async def perform_pull(pull_id: int):
         logging.error(f"Error in perform_pull for ID {pull_id}: {e}")
         # You might want to implement a retry mechanism or alert system here
 
-async def reschedule_pull(pull_id: int):
+def reschedule_pull(pull_id: int):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM scheduled_pulls WHERE id = ?", (pull_id,))
@@ -461,7 +433,7 @@ async def reschedule_pull(pull_id: int):
         conn.commit()
         
         scheduler.add_job(
-            perform_pull,
+            perform_pull,  # This is an async function
             'date',
             run_date=next_pull,
             args=[pull_id],
@@ -762,14 +734,11 @@ def calculate_and_cache_avg_ctr_per_position(project_id: int) -> Tuple[Dict, str
 @app.on_event("startup")
 async def startup_event():
     try:
-        init_db()
-        create_gsc_data_table()
-        add_columns_to_gsc_data()
+        init_db()  # Initialize the database using database.py's init_db()
         logging.info("Database initialized successfully.")
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}")
         raise e
-
 
 @app.get("/api/gsc/oauth2callback")
 async def gsc_oauth2callback(state: str, code: str):
@@ -1199,44 +1168,31 @@ async def fetch_serp_data_endpoint(project_id: int, request: SerpDataRequest = B
     return {"message": f"SERP and GSC data fetched and stored successfully for {len(active_keywords)} keywords"}
 
 @app.get("/api/gsc-data")
-async def get_gsc_data(project_id: Optional[int] = None, start_date: str = None, end_date: str = None):
-    conn = get_db_connection()
-    c = conn.cursor()
-
+async def get_gsc_data(
+    project_id: Optional[int] = Query(None, description="Filter by Project ID"),
+    domain_id: Optional[int] = Query(None, description="Filter by Domain ID"),
+    start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD")
+):
+    if not project_id and not domain_id:
+        raise HTTPException(status_code=400, detail="Either project_id or domain_id must be provided.")
+    
     # Set default dates if not provided
     if not start_date:
         start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
     if not end_date:
         end_date = datetime.now().strftime('%Y-%m-%d')
-
-    # Get the keywords for the specified project or all projects
-    if project_id:
-        c.execute("SELECT id FROM keywords WHERE project_id = ?", (project_id,))
-    else:
-        c.execute("SELECT id FROM keywords")
-
-    keyword_ids = [row['id'] for row in c.fetchall()]
-
-    if not keyword_ids:
-        conn.close()
-        return []
-
-    placeholders = ','.join(['?'] * len(keyword_ids))
-    query = f"""
-        SELECT keyword_id, date, clicks, impressions, ctr, position
-        FROM gsc_data
-        WHERE keyword_id IN ({placeholders})
-          AND date BETWEEN ? AND ?
-    """
-    params = keyword_ids + [start_date, end_date]
-    c.execute(query, params)
-
-    data = c.fetchall()
-    conn.close()
-
-    # Convert data to list of dicts
-    result = [dict(row) for row in data]
-    return result
+    
+    try:
+        if project_id:
+            data = get_gsc_data_by_project(project_id, start_date, end_date)
+        else:
+            data = get_gsc_data_by_domain(domain_id, start_date, end_date)
+        return {"data": data}
+    except Exception as e:
+        # Log the error details
+        logging.error(f"Error fetching GSC data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 @app.post("/api/fetch-serp-data-by-tag/{tag_id}")
 async def fetch_and_store_serp_data_by_tag(tag_id: int):
@@ -1278,32 +1234,134 @@ async def get_keywords_by_tag(tag_id: int):
 
 @app.get("/api/rankData")
 def get_rank_data():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''
-        SELECT s.id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, 
-               p.id as project_id, s.search_volume
-        FROM serp_data s
-        JOIN keywords k ON s.keyword_id = k.id
-        JOIN projects p ON k.project_id = p.id
-    ''')
-    rank_data_rows = c.fetchall()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            SELECT s.id, s.date, k.keyword, p.domain, s.rank, k.id as keyword_id, 
+                   p.id as project_id, s.search_volume, p.conversion_rate, p.conversion_value
+            FROM serp_data s
+            JOIN keywords k ON s.keyword_id = k.id
+            JOIN projects p ON k.project_id = p.id
+        ''')
+        rank_data_rows = c.fetchall()
+        conn.close()
 
-    processed_data = []
-    for item in rank_data_rows:
-        processed_data.append({
-            'id': item['id'],
-            'date': item['date'],
-            'keyword': item['keyword'],
-            'domain': item['domain'],
-            'rank': item['rank'],
-            'keyword_id': item['keyword_id'],
-            'project_id': item['project_id'],
-            'search_volume': item['search_volume']
-        })
+        processed_data = []
+        for item in rank_data_rows:
+            # Calculate estimated_business_impact
+            conversion_rate = item['conversion_rate'] or 0.0
+            conversion_value = item['conversion_value'] or 0.0
+            avg_ctr = get_avg_ctr_for_project_rank(item['project_id'], item['rank'])  # Ensure this returns a float
 
-    return {"data": processed_data}
+            if item['search_volume'] is not None and avg_ctr is not None:
+                estimated_traffic = avg_ctr * item['search_volume']
+                estimated_business_impact = estimated_traffic * conversion_rate * conversion_value
+            else:
+                estimated_business_impact = 0.0  # Default value
+
+            # Fetch GSC data for the keyword and date
+            gsc_data = get_gsc_data_for_keyword_and_date(item['keyword_id'], item['date'])
+
+            if gsc_data:
+                # Use current GSC data
+                gsc_data_for_date = gsc_data['gscDataForDate']
+                data_source_date = item['date']
+            else:
+                # Fetch the last available GSC data
+                last_gsc_data = get_last_available_gsc_data(item['keyword_id'], item['date'])
+                if last_gsc_data and 'gscDataForDate' in last_gsc_data:
+                    gsc_data_for_date = last_gsc_data['gscDataForDate']
+                    data_source_date = last_gsc_data['date']
+                else:
+                    gsc_data_for_date = {}
+                    data_source_date = None
+                    logging.warning(f"'gscDataForDate' is missing for keyword_id={item['keyword_id']}, date={item['date']}")
+
+            processed_data.append({
+                'id': item['id'],
+                'date': item['date'],
+                'keyword': item['keyword'],
+                'domain': item['domain'],
+                'rank': item['rank'],
+                'keyword_id': item['keyword_id'],
+                'project_id': item['project_id'],
+                'search_volume': item['search_volume'],
+                'estimated_business_impact': estimated_business_impact,
+                'gscDataForDate': gsc_data_for_date,
+                'dataSourceDate': data_source_date
+            })
+
+        return {"data": processed_data}
+
+    except Exception as e:
+        logging.error(f"Error in get_rank_data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+def get_gsc_data_for_keyword_and_date(keyword_id: int, date: str) -> Optional[Dict]:
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            SELECT position, clicks, impressions, ctr, query, page
+            FROM gsc_data
+            WHERE keyword_id = ? AND date = ?
+        ''', (keyword_id, date))
+        gsc_data = c.fetchone()
+        conn.close()
+        if gsc_data:
+            logging.info(f"GSC data found for keyword_id={keyword_id}, date={date}")
+            return {
+                'gscDataForDate': {
+                    'position': gsc_data['position'],
+                    'clicks': gsc_data['clicks'],
+                    'impressions': gsc_data['impressions'],
+                    'ctr': gsc_data['ctr'],
+                    'query': gsc_data['query'],
+                    'page': gsc_data['page']
+                }
+            }
+        logging.warning(f"No GSC data found for keyword_id={keyword_id}, date={date}")
+        return None
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in get_gsc_data_for_keyword_and_date: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred while retrieving GSC data.")
+    except Exception as e:
+        logging.error(f"Error in get_gsc_data_for_keyword_and_date: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving GSC data.")
+    
+def get_last_available_gsc_data(keyword_id: int, current_date: str) -> Optional[Dict]:
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            SELECT date, position, clicks, impressions, ctr
+            FROM gsc_data
+            WHERE keyword_id = ? AND date < ?
+            ORDER BY date DESC
+            LIMIT 1
+        ''', (keyword_id, current_date))
+        last_data = c.fetchone()
+        conn.close()
+        if last_data:
+            logging.info(f"Last available GSC data found for keyword_id={keyword_id}, derived from date={last_data['date']}")
+            return {
+                'gscDataForDate': {
+                    'position': last_data['position'],
+                    'clicks': last_data['clicks'],
+                    'impressions': last_data['impressions'],
+                    'ctr': last_data['ctr']
+                },
+                'date': last_data['date']
+            }
+        logging.warning(f"No previous GSC data found for keyword_id={keyword_id} before date={current_date}")
+        return None
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in get_last_available_gsc_data: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred while retrieving last available GSC data.")
+    except Exception as e:
+        logging.error(f"Error in get_last_available_gsc_data: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving last available GSC data.")
 
 @app.get("/api/serp-data/{serp_data_id}")
 async def get_full_serp_data(serp_data_id: int):
@@ -1416,7 +1474,7 @@ def add_serp_data(keyword_id, serp_data, search_volume):
     logging.info(f"Inserted SERP data for keyword_id: {keyword_id}, rank: {rank}")
 
     full_data = json.dumps(serp_data)
-    current_time = datetime.now(timezone.utc).isoformat()
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     c.execute('INSERT INTO serp_data (keyword_id, date, rank, full_data, search_volume) VALUES (?, ?, ?, ?, ?)',
               (keyword_id, current_time, rank, full_data, search_volume))
@@ -1693,32 +1751,6 @@ async def fetch_search_volume(keyword):
             else:
                 logging.warning(f"No search volume data found for '{keyword}'. Status: {response.status}, Response: {data}")
                 return 0
-
-async def update_search_volume(keyword_id, keyword):
-    conn = sqlite3.connect('seo_rank_tracker.db')
-    c = conn.cursor()
-    
-    c.execute("SELECT search_volume, last_volume_update FROM keywords WHERE id = ?", (keyword_id,))
-    result = c.fetchone()
-    search_volume, last_update = result if result else (None, None)
-    
-    current_time = datetime.now(timezone.utc)
-    should_update = (
-        search_volume is None or 
-        last_update is None or 
-        (current_time - datetime.fromisoformat(last_update).replace(tzinfo=timezone.utc)).days > 30
-    )
-    
-    if should_update:
-        volume = await fetch_search_volume(keyword)
-        c.execute("UPDATE keywords SET search_volume = ?, last_volume_update = ? WHERE id = ?", 
-                  (volume, current_time.isoformat(), keyword_id))
-        conn.commit()
-        logging.info(f"Updated search volume for keyword '{keyword}' (ID: {keyword_id}): {volume}")
-    else:
-        logging.info(f"Skipped updating search volume for keyword '{keyword}' (ID: {keyword_id}): last update was less than 30 days ago")
-    
-    conn.close()
 
 @app.post("/api/share-of-voice/{project_id}", response_model=ShareOfVoiceResponse)
 async def get_share_of_voice(
@@ -2007,9 +2039,9 @@ def refresh_ctr_cache():
         logging.info(f"Refreshed avg_ctr_per_position cache for project {project_id}")
 
 # Initialize and start the scheduler
-scheduler = BackgroundScheduler()
-scheduler.add_job(refresh_ctr_cache, 'interval', days=90)
-scheduler.start()
+# scheduler = BackgroundScheduler()
+# scheduler.add_job(refresh_ctr_cache, 'interval', days=90)
+# scheduler.start()
 
 # Ensure scheduler is shut down gracefully
 atexit.register(lambda: scheduler.shutdown())
