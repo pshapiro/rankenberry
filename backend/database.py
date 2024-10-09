@@ -6,14 +6,14 @@ import json
 from dateutil import parser
 import os
 from fastapi import HTTPException
-from datetime import datetime, timedelta
-
+from datetime import datetime, timedelta, timezone
+from services import fetch_search_volume
 # Determine the absolute path to the directory containing this file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'seo_rank_tracker.db')
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)  # Allow connections across threads
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -21,6 +21,7 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
 
+    # Create tables
     c.execute('''CREATE TABLE IF NOT EXISTS gsc_domains
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
@@ -31,13 +32,15 @@ def init_db():
 
     c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  domain_id INTEGER,
-                  keyword TEXT NOT NULL,
+                  keyword_id INTEGER,
                   date TEXT NOT NULL,
                   clicks INTEGER,
                   impressions INTEGER,
                   ctr REAL,
-                  FOREIGN KEY (domain_id) REFERENCES gsc_domains (id))''')
+                  position REAL,
+                  query TEXT,
+                  page TEXT,
+                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS projects
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,9 +58,9 @@ def init_db():
                   project_id INTEGER,
                   keyword TEXT NOT NULL,
                   active INTEGER DEFAULT 1,
+                  search_volume INTEGER DEFAULT 0,
+                  last_volume_update TEXT,
                   FOREIGN KEY (project_id) REFERENCES projects (id))''')
-
-    c.execute('ALTER TABLE keywords ADD COLUMN active INTEGER DEFAULT 1')
 
     c.execute('''CREATE TABLE IF NOT EXISTS serp_data
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,8 +71,22 @@ def init_db():
                   search_volume INTEGER,
                   FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
 
-    c.execute('''ALTER TABLE keywords ADD COLUMN search_volume INTEGER DEFAULT 0''')
-    c.execute('''ALTER TABLE keywords ADD COLUMN last_volume_update TEXT''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ctr_cache (
+            project_id INTEGER PRIMARY KEY,
+            avg_ctr_per_position TEXT NOT NULL,
+            last_updated TEXT NOT NULL,
+            date_range_start TEXT NOT NULL,
+            date_range_end TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects (id)
+        )
+    ''')
+
+    # Create Indexes for Performance Optimization
+    c.execute("CREATE INDEX IF NOT EXISTS idx_gsc_data_keyword_id_date ON gsc_data (keyword_id, date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_serp_data_keyword_id_date ON serp_data (keyword_id, date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_keywords_project_id ON keywords (project_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects (user_id)")
 
     conn.commit()
     conn.close()
@@ -187,22 +204,26 @@ def add_gsc_domain(user_id, domain, project_id):
     conn.close()
     return domain_id
 
-def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position):
+def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position, query, page):
+    conn = get_db_connection()
+    c = conn.cursor()
     # Only proceed if the keyword exists in the database
     c.execute("SELECT id FROM keywords WHERE project_id = ? AND keyword = ?", (project_id, keyword))
     result = c.fetchone()
     if result:
         keyword_id = result[0]
         # Insert the GSC data
-        c.execute('''INSERT OR REPLACE INTO gsc_data 
-                     (keyword_id, date, clicks, impressions, ctr, position)
-                     VALUES (?, ?, ?, ?, ?, ?)''',
-                  (keyword_id, date, clicks, impressions, ctr, position))
+        c.execute('''
+            INSERT INTO gsc_data 
+            (keyword_id, date, clicks, impressions, ctr, position, query, page)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (keyword_id, date, clicks, impressions, ctr, position, query, page))
         conn.commit()
         logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
     else:
         # Keyword not being tracked; ignore
         logging.info(f"Keyword '{keyword}' not found in project_id {project_id}. Skipping GSC data.")
+    conn.close()
 
 def get_gsc_domains(user_id):
     conn = get_db_connection()
@@ -211,18 +232,6 @@ def get_gsc_domains(user_id):
     domains = c.fetchall()
     conn.close()
     return [{"id": d[0], "domain": d[1]} for d in domains]
-
-def get_gsc_data(domain_id, start_date, end_date):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT keyword, date, clicks, impressions, ctr
-        FROM gsc_data
-        WHERE domain_id = ? AND date BETWEEN ? AND ?
-    """, (domain_id, start_date, end_date))
-    data = c.fetchall()
-    conn.close()
-    return [{"keyword": d[0], "date": d[1], "clicks": d[2], "impressions": d[3], "ctr": d[4]} for d in data]
 
 def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=None):
     conn = get_db_connection()
@@ -259,15 +268,17 @@ def get_serp_data_within_date_range(project_id, start_date, end_date, tag_id=Non
 def create_gsc_data_table():
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  keyword_id INTEGER,
-                  date TEXT,
-                  clicks INTEGER,
-                  impressions INTEGER,
-                  ctr REAL,
-                  position REAL,
-                  FOREIGN KEY (keyword_id) REFERENCES keywords (id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS gsc_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyword_id INTEGER,
+                date TEXT NOT NULL,
+                clicks INTEGER,
+                impressions INTEGER,
+                ctr REAL,
+                position REAL,
+                query TEXT,
+                page TEXT,
+                FOREIGN KEY (keyword_id) REFERENCES keywords (id)''')
     c.execute('''CREATE TABLE IF NOT EXISTS gsc_credentials
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   project_id INTEGER UNIQUE,
@@ -326,32 +337,36 @@ def add_gsc_data(project_id, keyword, date, clicks, impressions, ctr, position):
     conn.close()
     logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
 
-async def backfill_gsc_data(project_id, keyword_id, keyword):
-    # Get the earliest date we have data for
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT MIN(date) FROM gsc_data WHERE keyword_id = ?", (keyword_id,))
-    earliest_date = c.fetchone()[0]
-    conn.close()
+# async def backfill_gsc_data(project_id, keyword_id, keyword):
+#     # Get the earliest date we have data for
+#     conn = get_db_connection()
+#     c = conn.cursor()
+#     c.execute("SELECT MIN(date) FROM gsc_data WHERE keyword_id = ?", (keyword_id,))
+#     earliest_date = c.fetchone()[0]
+#     conn.close()
 
-    if earliest_date:
-        earliest_date = datetime.strptime(earliest_date, "%Y-%m-%d").date()
-        end_date = earliest_date - timedelta(days=1)
-        start_date = end_date - timedelta(days=30)  # Backfill up to 30 days
+#     if earliest_date:
+#         earliest_date = datetime.strptime(earliest_date, "%Y-%m-%d").date()
+#         end_date = earliest_date - timedelta(days=1)
+#         start_date = end_date - timedelta(days=30)  # Backfill up to 30 days
 
-        gsc_data = await fetch_gsc_data(project_id, keyword, start_date, end_date)
-        add_gsc_data(project_id, keyword_id, gsc_data)
+#         gsc_data = await fetch_gsc_data(project_id, keyword, start_date, end_date)
+#         add_gsc_data(project_id, keyword_id, gsc_data)
     
-def add_gsc_data_by_keyword_id(keyword_id, date, clicks, impressions, ctr, position):
+def add_gsc_data_by_keyword_id(keyword_id, date, clicks, impressions, ctr, position, query, page):
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO gsc_data 
-                 (keyword_id, date, clicks, impressions, ctr, position)
-                 VALUES (?, ?, ?, ?, ?, ?)''',
-              (keyword_id, date, clicks, impressions, ctr, position))
-    conn.commit()
-    conn.close()
-    logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+    try:
+        c.execute('''
+            INSERT INTO gsc_data (keyword_id, date, clicks, impressions, ctr, position, query, page)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (keyword_id, date, clicks, impressions, ctr, position, query, page))
+        conn.commit()
+        logging.info(f"Added GSC data for keyword_id: {keyword_id}, date: {date}")
+    except Exception as e:
+        logging.error(f"Error adding GSC data for keyword_id {keyword_id}: {str(e)}")
+    finally:
+        conn.close()
 
 async def update_search_volume_if_needed(keyword):
     conn = get_db_connection()
@@ -449,3 +464,130 @@ def get_project_by_id(project_id):
         raise
     finally:
         conn.close()
+
+def get_ctr_cache(project_id: int) -> Optional[Dict]:
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT avg_ctr_per_position, last_updated, date_range_start, date_range_end
+        FROM ctr_cache
+        WHERE project_id = ?
+    ''', (project_id,))
+    cache_entry = c.fetchone()
+    conn.close()
+    
+    if cache_entry:
+        parsed_last_updated = parser.parse(cache_entry["last_updated"])
+        # Ensure the datetime is timezone-aware. If not, set it to UTC.
+        if parsed_last_updated.tzinfo is None:
+            parsed_last_updated = parsed_last_updated.replace(tzinfo=timezone.utc)
+        
+        return {
+            "avg_ctr_per_position": json.loads(cache_entry["avg_ctr_per_position"]),
+            "last_updated": parsed_last_updated,
+            "date_range_start": cache_entry["date_range_start"],
+            "date_range_end": cache_entry["date_range_end"]
+        }
+    return None
+
+def set_ctr_cache(project_id: int, avg_ctr_per_position: Dict, last_updated: datetime, start_date: str, end_date: str):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        REPLACE INTO ctr_cache (project_id, avg_ctr_per_position, last_updated, date_range_start, date_range_end)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        project_id,
+        json.dumps(avg_ctr_per_position),
+        last_updated.isoformat(),
+        start_date,
+        end_date
+    ))
+    last_updated.isoformat()
+    conn.commit()
+    conn.close()
+
+def get_gsc_data_by_project(project_id: int, start_date: str, end_date: str) -> List[Dict]:
+    """
+    Retrieves GSC data filtered by project_id and date range.
+    
+    Args:
+        project_id (int): The ID of the project.
+        start_date (str): Start date in 'YYYY-MM-DD' format.
+        end_date (str): End date in 'YYYY-MM-DD' format.
+    
+    Returns:
+        List[Dict]: List of GSC data entries.
+    """
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT k.keyword, s.date, s.clicks, s.impressions, s.ctr, s.position
+            FROM gsc_data s
+            JOIN keywords k ON s.keyword_id = k.id
+            JOIN projects p ON k.project_id = p.id
+            WHERE p.id = ? AND s.date BETWEEN ? AND ?
+        """, (project_id, start_date, end_date))
+        data = c.fetchall()
+        conn.close()
+        return [
+            {
+                "keyword": d["keyword"],
+                "date": d["date"],
+                "clicks": d["clicks"],
+                "impressions": d["impressions"],
+                "ctr": d["ctr"],
+                "position": d["position"]
+            }
+            for d in data
+        ]
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in get_gsc_data_by_project: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred while retrieving GSC data.")
+    except Exception as e:
+        logging.error(f"Error in get_gsc_data_by_project: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving GSC data.")
+
+def get_gsc_data_by_domain(domain_id: int, start_date: str, end_date: str) -> List[Dict]:
+    """
+    Retrieves GSC data filtered by domain_id and date range.
+    
+    Args:
+        domain_id (int): The ID of the domain.
+        start_date (str): Start date in 'YYYY-MM-DD' format.
+        end_date (str): End date in 'YYYY-MM-DD' format.
+    
+    Returns:
+        List[Dict]: List of GSC data entries.
+    """
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT k.keyword, s.date, s.clicks, s.impressions, s.ctr, s.position
+            FROM gsc_data s
+            JOIN keywords k ON s.keyword_id = k.id
+            JOIN projects p ON k.project_id = p.id
+            JOIN gsc_domains gd ON p.id = gd.project_id
+            WHERE gd.id = ? AND s.date BETWEEN ? AND ?
+        """, (domain_id, start_date, end_date))
+        data = c.fetchall()
+        conn.close()
+        return [
+            {
+                "keyword": d["keyword"],
+                "date": d["date"],
+                "clicks": d["clicks"],
+                "impressions": d["impressions"],
+                "ctr": d["ctr"],
+                "position": d["position"]
+            }
+            for d in data
+        ]
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in get_gsc_data_by_domain: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred while retrieving GSC data.")
+    except Exception as e:
+        logging.error(f"Error in get_gsc_data_by_domain: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving GSC data.")

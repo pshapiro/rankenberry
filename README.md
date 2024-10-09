@@ -18,6 +18,8 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - Keyword tagging system
 - Historical data viewing and exporting
 - User-friendly interface built with Vue.js
+- Google Search Console integration
+- Business impact estimation based on rank changes
 
 ## Tech Stack
 
@@ -27,39 +29,51 @@ This SEO Rank Tracker is a web application that allows users to track search eng
 - API Integrations: 
   - [SpaceSERP](https://appsumo.8odi.net/nLaMra) for SERP data (lifetime deal on AppSumo)
   - Grepwords for search volume data
+  - Google Search Console API for additional search data
 
 ## Installation
 
-1. Clone the repository:
-   ```
+1. **Clone the repository:**
+   ```bash
    git clone https://github.com/your-username/seo-rank-tracker.git
    cd seo-rank-tracker
    ```
 
-2. Set up the backend:
-   ```
+2. **Set up the backend:**
+   ```bash
    cd backend
    python -m venv venv
    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
    pip install -r requirements.txt
    ```
 
-3. Set up the frontend:
-   ```
+3. **Set up the frontend:**
+   ```bash
    cd ../frontend/rankenberry-frontent
    npm install
    ```
 
-4. Install additional JavaScript libraries:
-   ```
+4. **Install additional JavaScript libraries:**
+   ```bash
    npm install axios pinia v-calendar plotly.js-dist-min
    ```
 
-5. Create a `.env` file in the backend directory and add your API keys:
-   ```
+5. **Create a `.env` file in the backend directory and add your API keys:**
+   ```env
    SPACESERP_API_KEY=your_spaceserp_api_key_here
    GREPWORDS_API_KEY=your_grepwords_api_key_here
+   GOOGLE_CLIENT_ID=your_google_client_id_here
+   GOOGLE_CLIENT_SECRET=your_google_client_secret_here
    ```
+
+   To obtain your Google Search Console API credentials:
+   1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+   2. Create a new project or select an existing one.
+   3. Enable the Google Search Console API for your project.
+   4. Go to the "Credentials" section and create a new OAuth 2.0 Client ID.
+   5. Choose "Web application" as the application type.
+   6. Add authorized redirect URIs (e.g., http://localhost:5000/oauth2callback for local development).
+   7. After creating, you'll receive a Client ID and Client Secret. Use these in your `.env` file.
 
 ### Additional JavaScript Libraries
 
@@ -74,42 +88,51 @@ These libraries are essential for the functionality of the frontend application.
 
 ### Prerequisites
 
-- Node.js (v14 or later)
-- Python (v3.8 or later)
-- pip (Python package manager)
+- **Node.js** (v14 or later)
+- **Python** (v3.8 or later)
+- **pip** (Python package manager)
 
 ### Running the Application
 
-1. Start the backend server:
-   ```
+1. **Start the backend server:**
+   ```bash
    cd backend
    uvicorn app:app --reload
    ```
 
-2. In a new terminal, start the frontend development server:
-   ```
+2. **In a new terminal, start the frontend development server:**
+   ```bash
    cd frontend/rankenberry-frontent
    npm run dev
    ```
 
-3. Open your browser and navigate to `http://localhost:5173` to use the application.
+3. **Open your browser and navigate to** [`http://localhost:5173`](http://localhost:5173) **to use the application.**
 
 ## Usage
 
-1. Add a new project with a domain
-2. Add keywords to track for each project
-3. Fetch SERP data for your keywords
-4. View and analyze ranking data over time
-5. Use the tagging system to organize and filter keywords
-6. View historical data for individual keywords
-7. Export keyword history data as needed
+1. **Add a new project with a domain.**
+2. **Add keywords to track for each project.**
+3. **Fetch SERP data for your keywords.**
+4. **View and analyze ranking data over time.**
+5. **Use the tagging system to organize and filter keywords.**
+6. **View historical data for individual keywords.**
+7. **Export keyword history data as needed.**
 
 ## New Features
 
-- Search volume tracking: The application now fetches and stores search volume data for keywords, updating every 30 days.
-- Keyword tagging: Users can now add tags to keywords for better organization and filtering.
-- Historical data viewing: A new modal allows users to view and export historical data for individual keywords.
-- Improved data visualization: The rank table now includes more detailed metrics and allows for advanced filtering.
+- **Search Volume Tracking:** The application now fetches and stores search volume data for keywords, updating every 30 days.
+- **Keyword Tagging:** Users can add tags to keywords for better organization and filtering.
+- **Historical Data Viewing:** A new modal allows users to view and export historical data for individual keywords.
+- **Improved Data Visualization:** The rank table includes more detailed metrics and allows for advanced filtering.
+- **Async Scheduler Integration:** Utilizes `AsyncIOScheduler` for asynchronous job scheduling, ensuring that scheduled tasks are properly awaited and executed without issues.
+- **Resilient Scheduling System:** Enhanced error handling and logging for scheduled tasks to ensure reliability and easier debugging.
+- **Google Search Console Integration:** Fetches additional search data to complement SERP information.
+- **Business Impact Estimation:** Calculates potential business impact based on rank changes, considering factors such as:
+  - Current and previous keyword rankings
+  - Search volume for the keyword
+  - Click-through rates (CTR) for different ranking positions according to yoour GSC data (and fallback to industry standard CTRs if not available)
+  - User-defined conversion rates and conversion values
+  This feature helps users understand the potential traffic and revenue implications of ranking changes, providing valuable insights for SEO strategy.
 
 ## Contributing
 

@@ -11,6 +11,7 @@ export const useMainStore = defineStore('main', {
     tags: [],
     gscDomains: [],
     gscDomain: null,
+    gscData: [],
   }),
   actions: {
     async fetchProjects() {
@@ -76,17 +77,18 @@ export const useMainStore = defineStore('main', {
     },
     async fetchRankData() {
       try {
-        const response = await axios.get(`${API_URL}/rankData`)
-        console.log('Received rank data:', response.data)
-        this.rankData = response.data.map(item => ({
+        const response = await axios.get(`${API_URL}/rankData`);
+        this.rankData = response.data.data.map(item => ({
           ...item,
           date: item.date ? new Date(item.date).toISOString() : null
-        }))
+        }));
+        console.log('Fetched rank data:', this.rankData);
       } catch (error) {
-        console.error('Error fetching rank data:', error)
-        throw error
+        console.error('Error fetching rank data:', error);
+        throw error;
       }
-    },
+    },    
+
     async fetchSerpData(projectId, tagId = null) {
       try {
         const payload = tagId ? { tag_id: tagId } : {};
@@ -371,19 +373,25 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-  fetchGscData: async (projectId, startDate, endDate) => {
-    try {
-      const params = { start_date: startDate, end_date: endDate };
-      if (projectId) {
-        params.project_id = projectId;
+    async fetchGscData({ project_id = null, domain_id = null, start_date, end_date }) {
+      if (!project_id && !domain_id) {
+        console.warn('No project_id or domain_id provided. Skipping GSC data fetch.');
+        return;
       }
-      const response = await axios.get(`${API_URL}/gsc-data`, { params });
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching GSC data:', error);
-      throw error;
-    }
-  },
+      try {
+        const params = { start_date, end_date };
+        if (project_id) params.project_id = project_id;
+        if (domain_id) params.domain_id = domain_id;
+    
+        const response = await axios.get(`${API_URL}/gsc-data`, { params });
+        this.gscData = response.data.data;
+        console.log('Fetched GSC data:', this.gscData);
+        return this.gscData;
+      } catch (error) {
+        console.error('Error fetching GSC data:', error);
+        throw error;
+      }
+    },    
 
     async fetchCombinedData(projectId, startDate, endDate) {
       try {

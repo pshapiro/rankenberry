@@ -66,7 +66,7 @@ const props = defineProps({
 
 const store = useMainStore();
 const startDate = ref(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
-const endDate = ref(new Date().toISOString().split('T')[0]);
+const endDate = ref(new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 const lineChartData = ref([]);
 const donutChartData = ref([]);
 const stackedBarChart = ref(null);

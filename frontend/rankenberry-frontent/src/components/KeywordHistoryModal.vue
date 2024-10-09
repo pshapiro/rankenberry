@@ -8,28 +8,26 @@
       </header>
       <section class="modal-card-body">
         <div class="field">
-          <DatePicker v-model="dateRange" is-range>
-            <template v-slot="{ inputValue, inputEvents }">
-              <div class="field has-addons">
-                <div class="control">
-                  <input
-                    class="input"
-                    :value="inputValue.start"
-                    v-on="inputEvents.start"
-                    placeholder="Start date"
-                  />
-                </div>
-                <div class="control">
-                  <input
-                    class="input"
-                    :value="inputValue.end"
-                    v-on="inputEvents.end"
-                    placeholder="End date"
-                  />
-                </div>
+          <div class="control is-expanded">
+            <div class="field is-grouped">
+              <div class="control">
+                <input
+                  type="date"
+                  v-model="dateRange.start"
+                  class="input"
+                  placeholder="Start Date"
+                />
               </div>
-            </template>
-          </DatePicker>
+              <div class="control">
+                <input
+                  type="date"
+                  v-model="dateRange.end"
+                  class="input"
+                  placeholder="End Date"
+                />
+              </div>
+            </div>
+          </div>
         </div>
         <div ref="chart" class="chart-container"></div>
         <div class="table-container mt-4">
@@ -73,7 +71,6 @@
 <script setup>
 import { ref, onMounted, watch, onUnmounted, nextTick, computed } from 'vue'
 import Plotly from 'plotly.js-dist-min'
-import { DatePicker } from 'v-calendar'
 
 const props = defineProps({
   isOpen: Boolean,
@@ -269,8 +266,6 @@ watch(() => props.isOpen, (newValue) => {
 </script>
 
 <style scoped>
-@import 'v-calendar/dist/style.css';
-
 .modal-card {
   width: 90%;
   max-width: 1200px;
